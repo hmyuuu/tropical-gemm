@@ -223,6 +223,17 @@ mod tests {
     }
 
     #[test]
+    fn test_addition_self_wins() {
+        let a = CountingTropical::<f64>::new(7.0, 1.0);
+        let b = CountingTropical::<f64>::new(5.0, 3.0);
+
+        let result = a.tropical_add(b);
+        // max(7, 5) = 7, keep count of winner
+        assert_eq!(result.value, 7.0);
+        assert_eq!(result.count, 1.0);
+    }
+
+    #[test]
     fn test_path_counting_example() {
         // Example: counting paths in a graph
         // Path A->B has value 3, count 1 (one path)
@@ -235,5 +246,166 @@ mod tests {
         let result = path1.tropical_add(path2);
         assert_eq!(result.value, 3.0);
         assert_eq!(result.count, 3.0);
+    }
+
+    #[test]
+    fn test_operator_overloads() {
+        let a = CountingTropical::<f64>::new(3.0, 2.0);
+        let b = CountingTropical::<f64>::new(5.0, 3.0);
+
+        // Add operator
+        let result = a + b;
+        assert_eq!(result.value, 5.0);
+        assert_eq!(result.count, 3.0);
+
+        // Mul operator
+        let result = a * b;
+        assert_eq!(result.value, 8.0);
+        assert_eq!(result.count, 6.0);
+    }
+
+    #[test]
+    fn test_default() {
+        let d = CountingTropical::<f64>::default();
+        assert!(d.value.is_infinite() && d.value < 0.0); // -inf
+        assert_eq!(d.count, 0.0);
+    }
+
+    #[test]
+    fn test_display_debug() {
+        let a = CountingTropical::<f64>::new(3.0, 2.0);
+
+        assert_eq!(format!("{}", a), "(3, 2)");
+        assert_eq!(format!("{:?}", a), "CountingTropical(3, 2)");
+    }
+
+    #[test]
+    fn test_from() {
+        let a: CountingTropical<f64> = 5.0.into();
+        assert_eq!(a.value, 5.0);
+        assert_eq!(a.count, 1.0); // Default count is 1
+
+        let b = CountingTropical::<f64>::from(3.0);
+        assert_eq!(b.value, 3.0);
+        assert_eq!(b.count, 1.0);
+    }
+
+    #[test]
+    fn test_from_value() {
+        let a = CountingTropical::<f64>::from_value(7.0);
+        assert_eq!(a.value, 7.0);
+        assert_eq!(a.count, 1.0);
+    }
+
+    #[test]
+    fn test_value_and_from_scalar() {
+        let a = CountingTropical::<f64>::new(5.0, 2.0);
+        assert_eq!(a.value(), 5.0);
+
+        let b = CountingTropical::<f64>::from_scalar(3.0);
+        assert_eq!(b.value(), 3.0);
+        assert_eq!(b.count, 1.0);
+    }
+
+    #[test]
+    fn test_argmax_self_wins() {
+        let a = CountingTropical::<f64>::new(7.0, 2.0);
+        let b = CountingTropical::<f64>::new(3.0, 1.0);
+
+        let (result, idx) = a.tropical_add_argmax(1, b, 2);
+        assert_eq!(result.value, 7.0);
+        assert_eq!(result.count, 2.0);
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn test_argmax_rhs_wins() {
+        let a = CountingTropical::<f64>::new(3.0, 1.0);
+        let b = CountingTropical::<f64>::new(7.0, 2.0);
+
+        let (result, idx) = a.tropical_add_argmax(1, b, 2);
+        assert_eq!(result.value, 7.0);
+        assert_eq!(result.count, 2.0);
+        assert_eq!(idx, 2);
+    }
+
+    #[test]
+    fn test_argmax_equal_counts_added() {
+        // Equal values: counts are added, first index is kept
+        let a = CountingTropical::<f64>::new(5.0, 2.0);
+        let b = CountingTropical::<f64>::new(5.0, 3.0);
+
+        let (result, idx) = a.tropical_add_argmax(1, b, 2);
+        assert_eq!(result.value, 5.0);
+        assert_eq!(result.count, 5.0); // 2 + 3
+        assert_eq!(idx, 1); // First index is kept
+    }
+
+    #[test]
+    fn test_argmax_chain() {
+        let mut acc = CountingTropical::<f64>::tropical_zero();
+        let mut idx = 0u32;
+
+        // Values with different counts
+        let values = [(3.0, 1.0), (7.0, 2.0), (7.0, 3.0), (5.0, 1.0)];
+        for (k, &(val, count)) in values.iter().enumerate() {
+            let candidate = CountingTropical::new(val, count);
+            (acc, idx) = acc.tropical_add_argmax(idx, candidate, k as u32);
+        }
+
+        // Max value is 7.0, first encountered at k=1
+        // Counts: 2 + 3 = 5 (both k=1 and k=2 have value 7.0)
+        assert_eq!(acc.value, 7.0);
+        assert_eq!(acc.count, 5.0);
+        assert_eq!(idx, 1); // First index where max occurred
+    }
+
+    #[test]
+    fn test_simd_tropical() {
+        assert!(CountingTropical::<f64>::SIMD_AVAILABLE);
+        assert_eq!(CountingTropical::<f64>::SIMD_WIDTH, 8);
+    }
+
+    #[test]
+    fn test_clone_copy() {
+        let a = CountingTropical::<f64>::new(5.0, 2.0);
+        let a_copy = a;
+        let a_clone = a.clone();
+
+        assert_eq!(a.value, a_copy.value);
+        assert_eq!(a.count, a_copy.count);
+        assert_eq!(a.value, a_clone.value);
+        assert_eq!(a.count, a_clone.count);
+    }
+
+    #[test]
+    fn test_eq() {
+        let a1 = CountingTropical::<f64>::new(5.0, 2.0);
+        let a2 = CountingTropical::<f64>::new(5.0, 2.0);
+        let b = CountingTropical::<f64>::new(5.0, 3.0);
+
+        assert_eq!(a1, a2);
+        assert_ne!(a1, b);
+    }
+
+    #[test]
+    fn test_f32() {
+        let a = CountingTropical::<f32>::new(3.0, 2.0);
+        let b = CountingTropical::<f32>::new(5.0, 3.0);
+
+        let result = a.tropical_mul(b);
+        assert!((result.value - 8.0).abs() < 1e-6);
+        assert!((result.count - 6.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_different_count_type() {
+        // Use different types for value and count
+        let a = CountingTropical::<f64, f32>::new(3.0, 2.0);
+        let b = CountingTropical::<f64, f32>::new(5.0, 3.0);
+
+        let result = a.tropical_mul(b);
+        assert_eq!(result.value, 8.0);
+        assert!((result.count - 6.0).abs() < 1e-6);
     }
 }

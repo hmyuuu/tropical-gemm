@@ -52,5 +52,50 @@ mod tests {
         println!("Current backend: {:?}", backend);
         println!("Description: {}", Backend::description());
         println!("Version info:\n{}", version_info());
+
+        // Verify backend is one of the expected values
+        assert!(backend == Backend::Portable || backend == Backend::Simd);
+    }
+
+    #[test]
+    fn test_backend_description_not_empty() {
+        let desc = Backend::description();
+        assert!(!desc.is_empty());
+        // Description should mention SIMD type or portable
+        assert!(
+            desc.contains("Portable")
+                || desc.contains("SSE2")
+                || desc.contains("AVX")
+                || desc.contains("NEON")
+        );
+    }
+
+    #[test]
+    fn test_version_info_format() {
+        let info = version_info();
+        assert!(info.contains("tropical-gemm v"));
+        assert!(info.contains("Backend:"));
+        assert!(info.contains("SIMD Level:"));
+    }
+
+    #[test]
+    fn test_backend_debug() {
+        let backend = Backend::current();
+        let debug_str = format!("{:?}", backend);
+        assert!(debug_str == "Portable" || debug_str == "Simd");
+    }
+
+    #[test]
+    fn test_backend_clone() {
+        let backend = Backend::current();
+        let cloned = backend;
+        assert_eq!(backend, cloned);
+    }
+
+    #[test]
+    fn test_backend_eq() {
+        assert_eq!(Backend::Portable, Backend::Portable);
+        assert_eq!(Backend::Simd, Backend::Simd);
+        assert_ne!(Backend::Portable, Backend::Simd);
     }
 }

@@ -240,3 +240,253 @@ impl_kernel_dispatch_portable!(
     TropicalMaxMul<i32>,
     TropicalMaxMul<i64>
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Test that the dispatch function exists and doesn't panic for small inputs
+    #[test]
+    fn test_dispatch_maxplus_f32() {
+        let a = vec![1.0f32, 2.0, 3.0, 4.0];
+        let b = vec![1.0f32, 2.0, 3.0, 4.0];
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxPlus<f32>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        // C[0,0] = max(A[0,0]+B[0,0], A[0,1]+B[1,0]) = max(1+1, 2+3) = 5
+        assert_eq!(c[0].0, 5.0);
+    }
+
+    #[test]
+    fn test_dispatch_maxplus_f64() {
+        let a = vec![1.0f64, 2.0, 3.0, 4.0];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0];
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxPlus<f64>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 5.0);
+    }
+
+    #[test]
+    fn test_dispatch_minplus_f32() {
+        let a = vec![1.0f32, 2.0, 3.0, 4.0];
+        let b = vec![1.0f32, 2.0, 3.0, 4.0];
+        let mut c = vec![TropicalMinPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMinPlus<f32>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        // C[0,0] = min(A[0,0]+B[0,0], A[0,1]+B[1,0]) = min(1+1, 2+3) = 2
+        assert_eq!(c[0].0, 2.0);
+    }
+
+    #[test]
+    fn test_dispatch_minplus_f64() {
+        let a = vec![1.0f64, 2.0, 3.0, 4.0];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0];
+        let mut c = vec![TropicalMinPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMinPlus<f64>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 2.0);
+    }
+
+    #[test]
+    fn test_dispatch_maxmul_f32() {
+        let a = vec![2.0f32, 3.0, 4.0, 5.0];
+        let b = vec![1.0f32, 2.0, 3.0, 4.0];
+        let mut c = vec![TropicalMaxMul::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxMul<f32>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        // C[0,0] = max(A[0,0]*B[0,0], A[0,1]*B[1,0]) = max(2*1, 3*3) = 9
+        assert_eq!(c[0].0, 9.0);
+    }
+
+    #[test]
+    fn test_dispatch_maxmul_f64() {
+        let a = vec![2.0f64, 3.0, 4.0, 5.0];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0];
+        let mut c = vec![TropicalMaxMul::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxMul<f64>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 9.0);
+    }
+
+    #[test]
+    fn test_dispatch_maxplus_i32() {
+        let a = vec![1i32, 2, 3, 4];
+        let b = vec![1i32, 2, 3, 4];
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxPlus<i32>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 5);
+    }
+
+    #[test]
+    fn test_dispatch_maxplus_i64() {
+        let a = vec![1i64, 2, 3, 4];
+        let b = vec![1i64, 2, 3, 4];
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxPlus<i64>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 5);
+    }
+
+    #[test]
+    fn test_dispatch_minplus_i32() {
+        let a = vec![1i32, 2, 3, 4];
+        let b = vec![1i32, 2, 3, 4];
+        let mut c = vec![TropicalMinPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMinPlus<i32>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 2);
+    }
+
+    #[test]
+    fn test_dispatch_minplus_i64() {
+        let a = vec![1i64, 2, 3, 4];
+        let b = vec![1i64, 2, 3, 4];
+        let mut c = vec![TropicalMinPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMinPlus<i64>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 2);
+    }
+
+    #[test]
+    fn test_dispatch_maxmul_i32() {
+        let a = vec![2i32, 3, 4, 5];
+        let b = vec![1i32, 2, 3, 4];
+        let mut c = vec![TropicalMaxMul::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxMul<i32>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 9);
+    }
+
+    #[test]
+    fn test_dispatch_maxmul_i64() {
+        let a = vec![2i64, 3, 4, 5];
+        let b = vec![1i64, 2, 3, 4];
+        let mut c = vec![TropicalMaxMul::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxMul<i64>>(
+                2, 2, 2,
+                a.as_ptr(), 2, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), 2,
+            );
+        }
+
+        assert_eq!(c[0].0, 9);
+    }
+
+    #[test]
+    fn test_dispatch_larger_matrix() {
+        // Test a larger matrix to exercise blocking
+        let m = 16;
+        let n = 16;
+        let k = 16;
+
+        let a: Vec<f32> = (0..m * k).map(|i| (i % 10) as f32).collect();
+        let b: Vec<f32> = (0..k * n).map(|i| (i % 10) as f32).collect();
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); m * n];
+
+        unsafe {
+            tropical_gemm_dispatch::<TropicalMaxPlus<f32>>(
+                m, n, k,
+                a.as_ptr(), k, Transpose::NoTrans,
+                b.as_ptr(), n, Transpose::NoTrans,
+                c.as_mut_ptr(), n,
+            );
+        }
+
+        // Just verify no panic and result is not all zeros
+        let has_non_zero = c.iter().any(|x| x.0 > f32::NEG_INFINITY);
+        assert!(has_non_zero);
+    }
+}

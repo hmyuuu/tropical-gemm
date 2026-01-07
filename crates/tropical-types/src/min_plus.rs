@@ -229,4 +229,86 @@ mod tests {
         let result = a.tropical_mul(zero);
         assert!(result.0.is_infinite() && result.0 > 0.0);
     }
+
+    #[test]
+    fn test_operator_overloads() {
+        let a = TropicalMinPlus::new(3.0f64);
+        let b = TropicalMinPlus::new(5.0f64);
+
+        // Add operator (min)
+        assert_eq!((a + b).0, 3.0);
+        assert_eq!((b + a).0, 3.0);
+
+        // Mul operator (add)
+        assert_eq!((a * b).0, 8.0);
+        assert_eq!((b * a).0, 8.0);
+    }
+
+    #[test]
+    fn test_default() {
+        let d = TropicalMinPlus::<f64>::default();
+        assert!(d.0.is_infinite() && d.0 > 0.0); // +inf
+        assert_eq!(d, TropicalMinPlus::tropical_zero());
+    }
+
+    #[test]
+    fn test_display_debug() {
+        let a = TropicalMinPlus::new(5.0f64);
+
+        assert_eq!(format!("{}", a), "5");
+        assert_eq!(format!("{:?}", a), "TropicalMinPlus(5)");
+    }
+
+    #[test]
+    fn test_from() {
+        let a: TropicalMinPlus<f64> = 5.0.into();
+        assert_eq!(a.0, 5.0);
+
+        let b = TropicalMinPlus::<f64>::from(3.0);
+        assert_eq!(b.0, 3.0);
+    }
+
+    #[test]
+    fn test_value_and_from_scalar() {
+        let a = TropicalMinPlus::new(5.0f64);
+        assert_eq!(a.value(), 5.0);
+
+        let b = TropicalMinPlus::<f64>::from_scalar(3.0);
+        assert_eq!(b.value(), 3.0);
+    }
+
+    #[test]
+    fn test_simd_tropical() {
+        assert!(TropicalMinPlus::<f64>::SIMD_AVAILABLE);
+        assert_eq!(TropicalMinPlus::<f64>::SIMD_WIDTH, 8);
+    }
+
+    #[test]
+    fn test_clone_copy() {
+        let a = TropicalMinPlus::new(5.0f64);
+        let a_copy = a;
+        let a_clone = a.clone();
+
+        assert_eq!(a, a_copy);
+        assert_eq!(a, a_clone);
+    }
+
+    #[test]
+    fn test_eq() {
+        let a1 = TropicalMinPlus::new(5.0f64);
+        let a2 = TropicalMinPlus::new(5.0f64);
+        let b = TropicalMinPlus::new(3.0f64);
+
+        assert_eq!(a1, a2);
+        assert_ne!(a1, b);
+    }
+
+    #[test]
+    fn test_f32() {
+        let a = TropicalMinPlus::new(3.0f32);
+        let b = TropicalMinPlus::new(5.0f32);
+
+        assert!((a.tropical_add(b).0 - 3.0).abs() < 1e-6);
+        assert!((a.tropical_mul(b).0 - 8.0).abs() < 1e-6);
+    }
 }

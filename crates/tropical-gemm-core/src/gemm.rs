@@ -484,4 +484,258 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_gemm_trans_a() {
+        // Test with A transposed
+        // A is stored column-major (3x2), so A^T is 2x3
+        // A^T = [[1, 2, 3], [4, 5, 6]]
+        let m = 2;
+        let n = 2;
+        let k = 3;
+
+        let a: [f64; 6] = [
+            1.0, 4.0, // column 0
+            2.0, 5.0, // column 1
+            3.0, 6.0, // column 2
+        ];
+
+        let b: [f64; 6] = [
+            1.0, 2.0, // row 0
+            3.0, 4.0, // row 1
+            5.0, 6.0, // row 2
+        ];
+
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); m * n];
+
+        unsafe {
+            tropical_gemm_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 2, Transpose::Trans, // lda=2 for column-major 3x2
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), n,
+            );
+        }
+
+        // A^T = [[1, 2, 3], [4, 5, 6]]
+        // B = [[1, 2], [3, 4], [5, 6]]
+        // C[0,0] = max(1+1, 2+3, 3+5) = 8
+        assert_eq!(c[0].0, 8.0);
+        // C[0,1] = max(1+2, 2+4, 3+6) = 9
+        assert_eq!(c[1].0, 9.0);
+        // C[1,0] = max(4+1, 5+3, 6+5) = 11
+        assert_eq!(c[2].0, 11.0);
+        // C[1,1] = max(4+2, 5+4, 6+6) = 12
+        assert_eq!(c[3].0, 12.0);
+    }
+
+    #[test]
+    fn test_gemm_trans_b() {
+        // Test with B transposed
+        // B is stored column-major (2x3), so B^T is 3x2
+        let m = 2;
+        let n = 2;
+        let k = 3;
+
+        let a: [f64; 6] = [
+            1.0, 2.0, 3.0, // row 0
+            4.0, 5.0, 6.0, // row 1
+        ];
+
+        // B stored column-major: columns are [1,3,5], [2,4,6]
+        let b: [f64; 6] = [
+            1.0, 3.0, 5.0, // column 0 of B^T = row of B
+            2.0, 4.0, 6.0, // column 1 of B^T
+        ];
+
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); m * n];
+
+        unsafe {
+            tropical_gemm_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 3, Transpose::NoTrans,
+                b.as_ptr(), 3, Transpose::Trans, // ldb=3 for column-major 2x3
+                c.as_mut_ptr(), n,
+            );
+        }
+
+        // A = [[1, 2, 3], [4, 5, 6]]
+        // B^T = [[1, 2], [3, 4], [5, 6]]
+        // C[0,0] = max(1+1, 2+3, 3+5) = 8
+        assert_eq!(c[0].0, 8.0);
+        assert_eq!(c[1].0, 9.0);
+        assert_eq!(c[2].0, 11.0);
+        assert_eq!(c[3].0, 12.0);
+    }
+
+    #[test]
+    fn test_gemm_trans_both() {
+        // Test with both A and B transposed
+        let m = 2;
+        let n = 2;
+        let k = 3;
+
+        // A column-major (3x2), A^T is 2x3
+        let a: [f64; 6] = [1.0, 4.0, 2.0, 5.0, 3.0, 6.0];
+        // B column-major (2x3), B^T is 3x2
+        let b: [f64; 6] = [1.0, 3.0, 5.0, 2.0, 4.0, 6.0];
+
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); m * n];
+
+        unsafe {
+            tropical_gemm_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 2, Transpose::Trans,
+                b.as_ptr(), 3, Transpose::Trans,
+                c.as_mut_ptr(), n,
+            );
+        }
+
+        assert_eq!(c[0].0, 8.0);
+        assert_eq!(c[1].0, 9.0);
+        assert_eq!(c[2].0, 11.0);
+        assert_eq!(c[3].0, 12.0);
+    }
+
+    #[test]
+    fn test_gemm_empty_m() {
+        let m = 0;
+        let n = 2;
+        let k = 3;
+
+        let a: [f64; 0] = [];
+        let b: [f64; 6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let mut c: Vec<TropicalMaxPlus<f64>> = vec![];
+
+        unsafe {
+            tropical_gemm_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 3, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), n,
+            );
+        }
+
+        // Should complete without panic
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn test_gemm_empty_n() {
+        let m = 2;
+        let n = 0;
+        let k = 3;
+
+        let a: [f64; 6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b: [f64; 0] = [];
+        let mut c: Vec<TropicalMaxPlus<f64>> = vec![];
+
+        unsafe {
+            tropical_gemm_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 3, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), n,
+            );
+        }
+
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn test_gemm_empty_k() {
+        let m = 2;
+        let n = 2;
+        let k = 0;
+
+        let a: [f64; 0] = [];
+        let b: [f64; 0] = [];
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); m * n];
+
+        unsafe {
+            tropical_gemm_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 0, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                c.as_mut_ptr(), n,
+            );
+        }
+
+        // C should remain initialized to tropical_zero
+        for val in &c {
+            assert!(val.0.is_infinite() && val.0 < 0.0);
+        }
+    }
+
+    #[test]
+    fn test_gemm_with_argmax_empty_k() {
+        let m = 2;
+        let n = 2;
+        let k = 0;
+
+        let a: [f64; 0] = [];
+        let b: [f64; 0] = [];
+        let mut result: GemmWithArgmax<TropicalMaxPlus<f64>> = GemmWithArgmax::new(m, n);
+
+        unsafe {
+            tropical_gemm_with_argmax_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 0, Transpose::NoTrans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                &mut result,
+            );
+        }
+
+        // Should complete without panic
+        assert_eq!(result.m, 2);
+        assert_eq!(result.n, 2);
+    }
+
+    #[test]
+    fn test_gemm_with_argmax_trans_a() {
+        let m = 2;
+        let n = 2;
+        let k = 3;
+
+        let a: [f64; 6] = [1.0, 4.0, 2.0, 5.0, 3.0, 6.0];
+        let b: [f64; 6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+
+        let mut result: GemmWithArgmax<TropicalMaxPlus<f64>> = GemmWithArgmax::new(m, n);
+
+        unsafe {
+            tropical_gemm_with_argmax_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 2, Transpose::Trans,
+                b.as_ptr(), 2, Transpose::NoTrans,
+                &mut result,
+            );
+        }
+
+        assert_eq!(result.get(0, 0).0, 8.0);
+        assert_eq!(result.get_argmax(0, 0), 2);
+    }
+
+    #[test]
+    fn test_gemm_with_argmax_trans_b() {
+        let m = 2;
+        let n = 2;
+        let k = 3;
+
+        let a: [f64; 6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b: [f64; 6] = [1.0, 3.0, 5.0, 2.0, 4.0, 6.0];
+
+        let mut result: GemmWithArgmax<TropicalMaxPlus<f64>> = GemmWithArgmax::new(m, n);
+
+        unsafe {
+            tropical_gemm_with_argmax_portable::<TropicalMaxPlus<f64>>(
+                m, n, k,
+                a.as_ptr(), 3, Transpose::NoTrans,
+                b.as_ptr(), 3, Transpose::Trans,
+                &mut result,
+            );
+        }
+
+        assert_eq!(result.get(0, 0).0, 8.0);
+        assert_eq!(result.get_argmax(0, 0), 2);
+    }
 }

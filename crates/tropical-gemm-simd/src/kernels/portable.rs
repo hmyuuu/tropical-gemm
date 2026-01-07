@@ -45,3 +45,65 @@ impl<T: TropicalWithArgmax<Index = u32>> MicrokernelWithArgmax<T> for PortableKe
         core_kernel.execute_with_argmax(mr, nr, k, k_offset, a, b, c, argmax, ldc);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tropical_types::TropicalMaxPlus;
+
+    #[test]
+    fn test_portable_kernel_execute() {
+        let kernel = PortableKernel;
+        let mr = 2;
+        let nr = 2;
+        let k = 2;
+
+        let a: [f64; 8] = [1.0, 2.0, 0.0, 0.0, 3.0, 4.0, 0.0, 0.0];
+        let b: [f64; 8] = [1.0, 2.0, 0.0, 0.0, 3.0, 4.0, 0.0, 0.0];
+        let mut c = [TropicalMaxPlus::tropical_zero(); 4];
+        let ldc = 2;
+
+        unsafe {
+            kernel.execute(mr, nr, k, a.as_ptr(), b.as_ptr(), c.as_mut_ptr(), ldc);
+        }
+
+        // C[0,0] = max(1+1, 3+3) = 6
+        assert_eq!(c[0].0, 6.0);
+    }
+
+    #[test]
+    fn test_portable_kernel_execute_with_argmax() {
+        let kernel = PortableKernel;
+        let mr = 2;
+        let nr = 2;
+        let k = 2;
+
+        let a: [f64; 8] = [1.0, 2.0, 0.0, 0.0, 10.0, 20.0, 0.0, 0.0];
+        let b: [f64; 8] = [1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0];
+        let mut c = [TropicalMaxPlus::tropical_zero(); 4];
+        let mut argmax = [0u32; 4];
+        let ldc = 2;
+        let k_offset = 0;
+
+        unsafe {
+            kernel.execute_with_argmax(
+                mr, nr, k, k_offset,
+                a.as_ptr(), b.as_ptr(),
+                c.as_mut_ptr(), argmax.as_mut_ptr(), ldc
+            );
+        }
+
+        // C[0,0] = max(1+1, 10+1) = 11 at k=1
+        assert_eq!(c[0].0, 11.0);
+        assert_eq!(argmax[0], 1);
+    }
+
+    #[test]
+    fn test_portable_kernel_default() {
+        let kernel = PortableKernel::default();
+        // Just verify it can be created and constants are accessible
+        assert_eq!(<PortableKernel as Microkernel<TropicalMaxPlus<f64>>>::MR, 4);
+        assert_eq!(<PortableKernel as Microkernel<TropicalMaxPlus<f64>>>::NR, 4);
+        let _ = kernel;
+    }
+}

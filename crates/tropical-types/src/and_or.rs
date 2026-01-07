@@ -139,6 +139,11 @@ mod tests {
         assert_eq!(a.tropical_add(zero), a);
         // a ⊗ 1 = a
         assert_eq!(a.tropical_mul(one), a);
+
+        // Test with false value too
+        let f = TropicalAndOr::new(false);
+        assert_eq!(f.tropical_add(zero), f);
+        assert_eq!(f.tropical_mul(one), f);
     }
 
     #[test]
@@ -178,5 +183,151 @@ mod tests {
 
         let result = a00.tropical_mul(a02).tropical_add(a01.tropical_mul(a12));
         assert!(result.0);
+    }
+
+    #[test]
+    fn test_operator_overloads() {
+        let t = TropicalAndOr::new(true);
+        let f = TropicalAndOr::new(false);
+
+        // Add operator (OR)
+        assert!((t + f).0);
+        assert!((f + t).0);
+        assert!(!(f + f).0);
+        assert!((t + t).0);
+
+        // Mul operator (AND)
+        assert!(!(t * f).0);
+        assert!(!(f * t).0);
+        assert!(!(f * f).0);
+        assert!((t * t).0);
+    }
+
+    #[test]
+    fn test_default() {
+        let d = TropicalAndOr::default();
+        assert!(!d.0); // Default is zero (false)
+        assert_eq!(d, TropicalAndOr::tropical_zero());
+    }
+
+    #[test]
+    fn test_display_debug() {
+        let t = TropicalAndOr::new(true);
+        let f = TropicalAndOr::new(false);
+
+        assert_eq!(format!("{}", t), "true");
+        assert_eq!(format!("{}", f), "false");
+        assert_eq!(format!("{:?}", t), "TropicalAndOr(true)");
+        assert_eq!(format!("{:?}", f), "TropicalAndOr(false)");
+    }
+
+    #[test]
+    fn test_from() {
+        let t: TropicalAndOr = true.into();
+        let f: TropicalAndOr = false.into();
+
+        assert!(t.0);
+        assert!(!f.0);
+
+        // Using From trait directly
+        let t2 = TropicalAndOr::from(true);
+        let f2 = TropicalAndOr::from(false);
+        assert!(t2.0);
+        assert!(!f2.0);
+    }
+
+    #[test]
+    fn test_value_and_from_scalar() {
+        let t = TropicalAndOr::new(true);
+        let f = TropicalAndOr::new(false);
+
+        assert!(t.value());
+        assert!(!f.value());
+
+        let t2 = TropicalAndOr::from_scalar(true);
+        let f2 = TropicalAndOr::from_scalar(false);
+        assert!(t2.value());
+        assert!(!f2.value());
+    }
+
+    #[test]
+    fn test_argmax_self_true() {
+        // If self is true, return self
+        let t = TropicalAndOr::new(true);
+        let f = TropicalAndOr::new(false);
+
+        let (result, idx) = t.tropical_add_argmax(1, f, 2);
+        assert!(result.0);
+        assert_eq!(idx, 1);
+
+        let (result, idx) = t.tropical_add_argmax(5, t, 10);
+        assert!(result.0);
+        assert_eq!(idx, 5);
+    }
+
+    #[test]
+    fn test_argmax_rhs_true() {
+        // If self is false but rhs is true, return rhs
+        let t = TropicalAndOr::new(true);
+        let f = TropicalAndOr::new(false);
+
+        let (result, idx) = f.tropical_add_argmax(1, t, 2);
+        assert!(result.0);
+        assert_eq!(idx, 2);
+    }
+
+    #[test]
+    fn test_argmax_both_false() {
+        // If both are false, return self (first one)
+        let f1 = TropicalAndOr::new(false);
+        let f2 = TropicalAndOr::new(false);
+
+        let (result, idx) = f1.tropical_add_argmax(10, f2, 20);
+        assert!(!result.0);
+        assert_eq!(idx, 10);
+    }
+
+    #[test]
+    fn test_argmax_chain() {
+        // Simulate accumulating through k iterations - find first true
+        let mut acc = TropicalAndOr::tropical_zero();
+        let mut idx = 0u32;
+
+        let values = [false, false, true, false]; // First true at index 2
+        for (k, &val) in values.iter().enumerate() {
+            let candidate = TropicalAndOr::new(val);
+            (acc, idx) = acc.tropical_add_argmax(idx, candidate, k as u32);
+        }
+
+        assert!(acc.0);
+        assert_eq!(idx, 2); // Index where first true occurred
+    }
+
+    #[test]
+    fn test_simd_tropical() {
+        assert!(TropicalAndOr::SIMD_AVAILABLE);
+        assert_eq!(TropicalAndOr::SIMD_WIDTH, 256);
+    }
+
+    #[test]
+    fn test_clone_copy() {
+        let t = TropicalAndOr::new(true);
+        let t_copy = t; // Copy
+        let t_clone = t.clone(); // Clone
+
+        assert_eq!(t, t_copy);
+        assert_eq!(t, t_clone);
+    }
+
+    #[test]
+    fn test_eq() {
+        let t1 = TropicalAndOr::new(true);
+        let t2 = TropicalAndOr::new(true);
+        let f1 = TropicalAndOr::new(false);
+        let f2 = TropicalAndOr::new(false);
+
+        assert_eq!(t1, t2);
+        assert_eq!(f1, f2);
+        assert_ne!(t1, f1);
     }
 }

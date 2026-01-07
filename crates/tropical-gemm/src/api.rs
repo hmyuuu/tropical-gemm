@@ -263,6 +263,41 @@ mod tests {
     }
 
     #[test]
+    fn test_builder_api_trans_a() {
+        // A is 3x2 stored as column-major (actually 2x3 in row-major transposed)
+        // A^T is 2x3, B is 3x2, result is 2x2
+        let a = vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0]; // col-major 3x2
+        let b = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // row-major 3x2
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); 4];
+
+        TropicalGemm::<TropicalMaxPlus<f32>>::new(2, 2, 3)
+            .trans_a()
+            .execute(&a, 2, &b, 2, &mut c, 2);
+
+        // A^T = [[1, 2, 3], [4, 5, 6]]
+        // B = [[1, 2], [3, 4], [5, 6]]
+        // C[0,0] = max(1+1, 2+3, 3+5) = 8
+        assert_eq!(c[0].0, 8.0);
+    }
+
+    #[test]
+    fn test_builder_api_trans_b() {
+        // A is 2x3, B^T is 2x3 stored as column-major, result is 2x2
+        let a = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // row-major 2x3
+        let b = vec![1.0f32, 3.0, 5.0, 2.0, 4.0, 6.0]; // col-major 2x3
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); 4];
+
+        TropicalGemm::<TropicalMaxPlus<f32>>::new(2, 2, 3)
+            .trans_b()
+            .execute(&a, 3, &b, 3, &mut c, 2);
+
+        // A = [[1, 2, 3], [4, 5, 6]]
+        // B^T = [[1, 2], [3, 4], [5, 6]]
+        // C[0,0] = max(1+1, 2+3, 3+5) = 8
+        assert_eq!(c[0].0, 8.0);
+    }
+
+    #[test]
     fn test_tropical_matmul_min_plus() {
         use tropical_types::TropicalMinPlus;
 
@@ -350,5 +385,139 @@ mod tests {
         for val in &c {
             assert!(val.0.is_finite());
         }
+    }
+
+    #[test]
+    fn test_tropical_matmul_i32() {
+        let a = vec![1i32, 2, 3, 4, 5, 6];
+        let b = vec![1i32, 2, 3, 4, 5, 6];
+
+        let c = tropical_matmul::<TropicalMaxPlus<i32>>(&a, 2, 3, &b, 2);
+
+        assert_eq!(c[0].0, 8);
+        assert_eq!(c[1].0, 9);
+        assert_eq!(c[2].0, 11);
+        assert_eq!(c[3].0, 12);
+    }
+
+    #[test]
+    fn test_tropical_matmul_i64() {
+        let a = vec![1i64, 2, 3, 4, 5, 6];
+        let b = vec![1i64, 2, 3, 4, 5, 6];
+
+        let c = tropical_matmul::<TropicalMaxPlus<i64>>(&a, 2, 3, &b, 2);
+
+        assert_eq!(c[0].0, 8);
+        assert_eq!(c[1].0, 9);
+        assert_eq!(c[2].0, 11);
+        assert_eq!(c[3].0, 12);
+    }
+
+    #[test]
+    fn test_tropical_matmul_minplus_i32() {
+        use tropical_types::TropicalMinPlus;
+
+        let a = vec![1i32, 2, 3, 4, 5, 6];
+        let b = vec![1i32, 2, 3, 4, 5, 6];
+
+        let c = tropical_matmul::<TropicalMinPlus<i32>>(&a, 2, 3, &b, 2);
+
+        assert_eq!(c[0].0, 2);
+        assert_eq!(c[1].0, 3);
+        assert_eq!(c[2].0, 5);
+        assert_eq!(c[3].0, 6);
+    }
+
+    #[test]
+    fn test_unsafe_tropical_gemm() {
+        let a = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); 4];
+
+        unsafe {
+            tropical_gemm::<TropicalMaxPlus<f64>>(
+                2,
+                2,
+                3,
+                a.as_ptr(),
+                3,
+                Transpose::NoTrans,
+                b.as_ptr(),
+                2,
+                Transpose::NoTrans,
+                c.as_mut_ptr(),
+                2,
+            );
+        }
+
+        assert_eq!(c[0].0, 8.0);
+        assert_eq!(c[1].0, 9.0);
+        assert_eq!(c[2].0, 11.0);
+        assert_eq!(c[3].0, 12.0);
+    }
+
+    #[test]
+    fn test_minplus_with_argmax() {
+        use tropical_types::TropicalMinPlus;
+
+        let a = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+
+        let result = tropical_matmul_with_argmax::<TropicalMinPlus<f64>>(&a, 2, 3, &b, 2);
+
+        // C[0,0] = min(1+1, 2+3, 3+5) = 2 at k=0
+        assert_eq!(result.get(0, 0).0, 2.0);
+        assert_eq!(result.get_argmax(0, 0), 0);
+
+        // C[1,1] = min(4+2, 5+4, 6+6) = 6 at k=0
+        assert_eq!(result.get(1, 1).0, 6.0);
+        assert_eq!(result.get_argmax(1, 1), 0);
+    }
+
+    #[test]
+    fn test_maxmul_with_argmax() {
+        use tropical_types::TropicalMaxMul;
+
+        let a = vec![2.0f64, 3.0, 4.0, 5.0];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0];
+
+        let result = tropical_matmul_with_argmax::<TropicalMaxMul<f64>>(&a, 2, 2, &b, 2);
+
+        // C[0,0] = max(2*1, 3*3) = 9 at k=1
+        assert_eq!(result.get(0, 0).0, 9.0);
+        assert_eq!(result.get_argmax(0, 0), 1);
+    }
+
+    #[test]
+    fn test_gemmwithargmax_dimensions() {
+        let a = vec![1.0f64; 12]; // 3x4
+        let b = vec![1.0f64; 20]; // 4x5
+
+        let result = tropical_matmul_with_argmax::<TropicalMaxPlus<f64>>(&a, 3, 4, &b, 5);
+
+        assert_eq!(result.m, 3);
+        assert_eq!(result.n, 5);
+        assert_eq!(result.values.len(), 15);
+        assert_eq!(result.argmax.len(), 15);
+    }
+
+    #[test]
+    fn test_identity_like_matrix() {
+        // Matrix with -inf everywhere except diagonal has 0
+        let a = vec![
+            0.0f64,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+        ];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0];
+
+        let c = tropical_matmul::<TropicalMaxPlus<f64>>(&a, 2, 2, &b, 2);
+
+        // With "identity" A, C should equal B
+        assert_eq!(c[0].0, 1.0);
+        assert_eq!(c[1].0, 2.0);
+        assert_eq!(c[2].0, 3.0);
+        assert_eq!(c[3].0, 4.0);
     }
 }

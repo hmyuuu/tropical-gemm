@@ -237,6 +237,39 @@ mod tests {
     }
 
     #[test]
+    fn test_pack_a_col_major() {
+        // Column-major: columns are stored contiguously
+        // Matrix: [[1, 2, 3], [4, 5, 6]]
+        // Col-major storage: [1, 4, 2, 5, 3, 6]
+        let a: [f64; 6] = [1.0, 4.0, 2.0, 5.0, 3.0, 6.0];
+        let m = 2;
+        let k = 3;
+        let mr = 4;
+        let lda = 2; // Leading dimension for col-major
+
+        let mut packed = vec![0.0f64; packed_a_size(m, k, mr)];
+
+        unsafe {
+            pack_a(
+                m,
+                k,
+                a.as_ptr(),
+                lda,
+                Layout::ColMajor,
+                Transpose::NoTrans,
+                packed.as_mut_ptr(),
+                mr,
+            );
+        }
+
+        // Same result as row-major since we're extracting the same logical matrix
+        assert_eq!(packed[0], 1.0); // a[0,0]
+        assert_eq!(packed[1], 4.0); // a[1,0]
+        assert_eq!(packed[4], 2.0); // a[0,1]
+        assert_eq!(packed[5], 5.0); // a[1,1]
+    }
+
+    #[test]
     fn test_pack_b_row_major() {
         let b: [f64; 6] = [
             1.0, 2.0, // row 0
@@ -273,6 +306,179 @@ mod tests {
     }
 
     #[test]
+    fn test_pack_b_col_major() {
+        // Column-major: columns are stored contiguously
+        // Matrix B (k=3, n=2): [[1, 2], [3, 4], [5, 6]]
+        // Col-major storage: [1, 3, 5, 2, 4, 6]
+        let b: [f64; 6] = [1.0, 3.0, 5.0, 2.0, 4.0, 6.0];
+        let k = 3;
+        let n = 2;
+        let nr = 4;
+        let ldb = 3; // Leading dimension for col-major (number of rows)
+
+        let mut packed = vec![0.0f64; packed_b_size(k, n, nr)];
+
+        unsafe {
+            pack_b(
+                k,
+                n,
+                b.as_ptr(),
+                ldb,
+                Layout::ColMajor,
+                Transpose::NoTrans,
+                packed.as_mut_ptr(),
+                nr,
+            );
+        }
+
+        // Expected: same logical values as row-major
+        assert_eq!(packed[0], 1.0); // b[0,0]
+        assert_eq!(packed[1], 2.0); // b[0,1]
+        assert_eq!(packed[4], 3.0); // b[1,0]
+        assert_eq!(packed[5], 4.0); // b[1,1]
+    }
+
+    #[test]
+    fn test_pack_a_with_transpose() {
+        // Test packing with transpose
+        let a: [f64; 6] = [
+            1.0, 2.0, // row 0 (becomes col 0 after trans)
+            3.0, 4.0, // row 1
+            5.0, 6.0, // row 2
+        ];
+        let m = 2;  // After transpose: original 2 columns become 2 rows
+        let k = 3;  // After transpose: original 3 rows become 3 cols
+        let mr = 4;
+        let lda = 2;
+
+        let mut packed = vec![0.0f64; packed_a_size(m, k, mr)];
+
+        unsafe {
+            pack_a(
+                m,
+                k,
+                a.as_ptr(),
+                lda,
+                Layout::RowMajor,
+                Transpose::Trans,
+                packed.as_mut_ptr(),
+                mr,
+            );
+        }
+
+        // A^T = [[1, 3, 5], [2, 4, 6]]
+        assert_eq!(packed[0], 1.0); // a^T[0,0]
+        assert_eq!(packed[1], 2.0); // a^T[1,0]
+        assert_eq!(packed[4], 3.0); // a^T[0,1]
+        assert_eq!(packed[5], 4.0); // a^T[1,1]
+    }
+
+    #[test]
+    fn test_pack_b_with_transpose() {
+        // Test packing B with transpose
+        let b: [f64; 6] = [
+            1.0, 2.0, 3.0, // row 0
+            4.0, 5.0, 6.0, // row 1
+        ];
+        let k = 3;  // After transpose: original 3 cols become 3 rows
+        let n = 2;  // After transpose: original 2 rows become 2 cols
+        let nr = 4;
+        let ldb = 3;
+
+        let mut packed = vec![0.0f64; packed_b_size(k, n, nr)];
+
+        unsafe {
+            pack_b(
+                k,
+                n,
+                b.as_ptr(),
+                ldb,
+                Layout::RowMajor,
+                Transpose::Trans,
+                packed.as_mut_ptr(),
+                nr,
+            );
+        }
+
+        // B^T = [[1, 4], [2, 5], [3, 6]]
+        assert_eq!(packed[0], 1.0); // b^T[0,0]
+        assert_eq!(packed[1], 4.0); // b^T[0,1]
+        assert_eq!(packed[4], 2.0); // b^T[1,0]
+        assert_eq!(packed[5], 5.0); // b^T[1,1]
+    }
+
+    #[test]
+    fn test_pack_a_exact_mr() {
+        // Test when m is exactly divisible by mr (no remainder path)
+        let a: [f64; 12] = [
+            1.0, 2.0, 3.0, // row 0
+            4.0, 5.0, 6.0, // row 1
+            7.0, 8.0, 9.0, // row 2
+            10.0, 11.0, 12.0, // row 3
+        ];
+        let m = 4;
+        let k = 3;
+        let mr = 4;
+        let lda = 3;
+
+        let mut packed = vec![0.0f64; packed_a_size(m, k, mr)];
+
+        unsafe {
+            pack_a(
+                m,
+                k,
+                a.as_ptr(),
+                lda,
+                Layout::RowMajor,
+                Transpose::NoTrans,
+                packed.as_mut_ptr(),
+                mr,
+            );
+        }
+
+        // No padding needed
+        assert_eq!(packed[0], 1.0);
+        assert_eq!(packed[1], 4.0);
+        assert_eq!(packed[2], 7.0);
+        assert_eq!(packed[3], 10.0);
+    }
+
+    #[test]
+    fn test_pack_b_exact_nr() {
+        // Test when n is exactly divisible by nr (no remainder path)
+        let b: [f64; 12] = [
+            1.0, 2.0, 3.0, 4.0, // row 0
+            5.0, 6.0, 7.0, 8.0, // row 1
+            9.0, 10.0, 11.0, 12.0, // row 2
+        ];
+        let k = 3;
+        let n = 4;
+        let nr = 4;
+        let ldb = 4;
+
+        let mut packed = vec![0.0f64; packed_b_size(k, n, nr)];
+
+        unsafe {
+            pack_b(
+                k,
+                n,
+                b.as_ptr(),
+                ldb,
+                Layout::RowMajor,
+                Transpose::NoTrans,
+                packed.as_mut_ptr(),
+                nr,
+            );
+        }
+
+        // No padding needed
+        assert_eq!(packed[0], 1.0);
+        assert_eq!(packed[1], 2.0);
+        assert_eq!(packed[2], 3.0);
+        assert_eq!(packed[3], 4.0);
+    }
+
+    #[test]
     fn test_packed_a_size() {
         // Exact multiple of mr
         assert_eq!(packed_a_size(8, 10, 4), 8 * 10);
@@ -290,5 +496,33 @@ mod tests {
         assert_eq!(packed_b_size(10, 5, 4), 10 * 8);
         // n=1, nr=4 -> n_padded=4
         assert_eq!(packed_b_size(10, 1, 4), 10 * 4);
+    }
+
+    #[test]
+    fn test_layout_debug() {
+        assert_eq!(format!("{:?}", Layout::RowMajor), "RowMajor");
+        assert_eq!(format!("{:?}", Layout::ColMajor), "ColMajor");
+    }
+
+    #[test]
+    fn test_layout_clone_eq() {
+        let l1 = Layout::RowMajor;
+        let l2 = l1;
+        assert_eq!(l1, l2);
+        assert_ne!(l1, Layout::ColMajor);
+    }
+
+    #[test]
+    fn test_transpose_debug() {
+        assert_eq!(format!("{:?}", Transpose::NoTrans), "NoTrans");
+        assert_eq!(format!("{:?}", Transpose::Trans), "Trans");
+    }
+
+    #[test]
+    fn test_transpose_clone_eq() {
+        let t1 = Transpose::Trans;
+        let t2 = t1;
+        assert_eq!(t1, t2);
+        assert_ne!(t1, Transpose::NoTrans);
     }
 }
