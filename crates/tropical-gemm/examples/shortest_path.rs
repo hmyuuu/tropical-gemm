@@ -58,7 +58,7 @@ fn main() {
     );
     println!(
         "  1 -> 4: {} (path: 1->2->3->4 = 2+1+2 = 5)",
-        d4_values[1 * n + 4]
+        d4_values[n + 4]
     );
 
     // With argmax tracking to find the intermediate nodes

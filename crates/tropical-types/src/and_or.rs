@@ -147,14 +147,14 @@ mod tests {
         let f = TropicalAndOr::new(false);
 
         // OR operations
-        assert_eq!(t.tropical_add(f).0, true);
-        assert_eq!(f.tropical_add(f).0, false);
-        assert_eq!(t.tropical_add(t).0, true);
+        assert!(t.tropical_add(f).0);
+        assert!(!f.tropical_add(f).0);
+        assert!(t.tropical_add(t).0);
 
         // AND operations
-        assert_eq!(t.tropical_mul(f).0, false);
-        assert_eq!(t.tropical_mul(t).0, true);
-        assert_eq!(f.tropical_mul(f).0, false);
+        assert!(!t.tropical_mul(f).0);
+        assert!(t.tropical_mul(t).0);
+        assert!(!f.tropical_mul(f).0);
     }
 
     #[test]
@@ -177,6 +177,6 @@ mod tests {
         let a02 = TropicalAndOr::new(false);
 
         let result = a00.tropical_mul(a02).tropical_add(a01.tropical_mul(a12));
-        assert_eq!(result.0, true);
+        assert!(result.0);
     }
 }

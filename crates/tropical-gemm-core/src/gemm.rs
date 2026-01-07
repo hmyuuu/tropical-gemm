@@ -107,13 +107,13 @@ pub unsafe fn tropical_gemm_inner<T: TropicalSemiring, K: Microkernel<T>>(
                 );
 
                 // Loop 2: micro-blocks of n
-                let n_blocks = (nc + K::NR - 1) / K::NR;
+                let n_blocks = nc.div_ceil(K::NR);
                 for jr in 0..n_blocks {
                     let j_start = jr * K::NR;
                     let nr = (nc - j_start).min(K::NR);
 
                     // Loop 1: micro-blocks of m
-                    let m_blocks = (mc + K::MR - 1) / K::MR;
+                    let m_blocks = mc.div_ceil(K::MR);
                     for ir in 0..m_blocks {
                         let i_start = ir * K::MR;
                         let mr = (mc - i_start).min(K::MR);
@@ -215,12 +215,12 @@ pub unsafe fn tropical_gemm_with_argmax_inner<
                     K::MR,
                 );
 
-                let n_blocks = (nc + K::NR - 1) / K::NR;
+                let n_blocks = nc.div_ceil(K::NR);
                 for jr in 0..n_blocks {
                     let j_start = jr * K::NR;
                     let nr = (nc - j_start).min(K::NR);
 
-                    let m_blocks = (mc + K::MR - 1) / K::MR;
+                    let m_blocks = mc.div_ceil(K::MR);
                     for ir in 0..m_blocks {
                         let i_start = ir * K::MR;
                         let mr = (mc - i_start).min(K::MR);

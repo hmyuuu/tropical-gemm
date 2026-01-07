@@ -72,7 +72,7 @@ fn main() {
     // AndOr example for reachability
     println!("\n--- Graph Reachability (TropicalAndOr) ---\n");
 
-    let adj = vec![
+    let adj = [
         false, true, false, // node 0 connects to 1
         false, false, true, // node 1 connects to 2
         true, false, false, // node 2 connects to 0

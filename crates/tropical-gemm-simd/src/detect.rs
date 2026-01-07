@@ -1,5 +1,4 @@
 /// CPU feature detection for runtime SIMD dispatch.
-
 /// Available SIMD instruction sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SimdLevel {
@@ -32,13 +31,13 @@ impl SimdLevel {
                 return SimdLevel::Avx;
             }
             // SSE2 is always available on x86-64
-            return SimdLevel::Sse2;
+            SimdLevel::Sse2
         }
 
         #[cfg(target_arch = "aarch64")]
         {
             // NEON is always available on AArch64
-            return SimdLevel::Neon;
+            SimdLevel::Neon
         }
 
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]

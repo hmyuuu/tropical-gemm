@@ -186,14 +186,14 @@ unsafe fn get_element<T: Copy>(
 /// Calculate packed buffer size for A.
 #[inline]
 pub fn packed_a_size(m: usize, k: usize, mr: usize) -> usize {
-    let m_padded = (m + mr - 1) / mr * mr;
+    let m_padded = m.div_ceil(mr) * mr;
     m_padded * k
 }
 
 /// Calculate packed buffer size for B.
 #[inline]
 pub fn packed_b_size(k: usize, n: usize, nr: usize) -> usize {
-    let n_padded = (n + nr - 1) / nr * nr;
+    let n_padded = n.div_ceil(nr) * nr;
     k * n_padded
 }
 

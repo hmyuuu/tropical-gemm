@@ -51,10 +51,10 @@ impl TilingParams {
 
     /// Validate that tiling parameters are consistent.
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.mc % self.mr != 0 {
+        if !self.mc.is_multiple_of(self.mr) {
             return Err("mc must be divisible by mr");
         }
-        if self.nc % self.nr != 0 {
+        if !self.nc.is_multiple_of(self.nr) {
             return Err("nc must be divisible by nr");
         }
         if self.mr == 0 || self.nr == 0 {
