@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tropical-types",
+    "crates/tropical-gemm-core",
+    "crates/tropical-gemm-simd",
+    "crates/tropical-gemm-cuda",
+    "crates/tropical-gemm",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Leo"]
+repository = "https://github.com/TensorBFS/tropical-gemm"
+
+[workspace.dependencies]
+# Internal crates
+tropical-types = { path = "crates/tropical-types" }
+tropical-gemm-core = { path = "crates/tropical-gemm-core" }
+tropical-gemm-simd = { path = "crates/tropical-gemm-simd" }
+tropical-gemm-cuda = { path = "crates/tropical-gemm-cuda" }
+tropical-gemm = { path = "crates/tropical-gemm" }
+
+# External dependencies
+num-traits = "0.2"
+wide = "0.7"
+rayon = "1.10"
+cudarc = { version = "0.12", features = ["driver", "nvrtc", "cuda-12020"] }
+thiserror = "1.0"
+
+# Testing
+criterion = "0.5"
+proptest = "1.0"

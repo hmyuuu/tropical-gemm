@@ -1,0 +1,15 @@
+[package]
+name = "tropical-gemm-cuda"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CUDA backend for tropical matrix multiplication"
+
+[dependencies]
+tropical-types = { workspace = true }
+cudarc = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tropical-gemm-core = { workspace = true }
+tropical-gemm = { workspace = true }

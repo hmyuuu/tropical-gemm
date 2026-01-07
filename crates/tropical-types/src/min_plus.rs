@@ -1,0 +1,164 @@
+use crate::scalar::TropicalScalar;
+use crate::traits::{SimdTropical, TropicalSemiring, TropicalWithArgmax};
+use std::fmt;
+use std::ops::{Add, Mul};
+
+/// TropicalMinPlus semiring: (ℝ ∪ {+∞}, min, +)
+///
+/// - Addition (⊕) = min
+/// - Multiplication (⊗) = +
+/// - Zero = +∞
+/// - One = 0
+///
+/// This is used for:
+/// - Shortest path algorithms (Dijkstra, Floyd-Warshall)
+/// - Dynamic programming with minimum cost
+#[derive(Copy, Clone, PartialEq)]
+#[repr(transparent)]
+pub struct TropicalMinPlus<T: TropicalScalar>(pub T);
+
+impl<T: TropicalScalar> TropicalMinPlus<T> {
+    /// Create a new TropicalMinPlus value.
+    #[inline(always)]
+    pub fn new(value: T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: TropicalScalar> TropicalSemiring for TropicalMinPlus<T> {
+    type Scalar = T;
+
+    #[inline(always)]
+    fn tropical_zero() -> Self {
+        Self(T::pos_infinity())
+    }
+
+    #[inline(always)]
+    fn tropical_one() -> Self {
+        Self(T::scalar_zero())
+    }
+
+    #[inline(always)]
+    fn tropical_add(self, rhs: Self) -> Self {
+        Self(self.0.scalar_min(rhs.0))
+    }
+
+    #[inline(always)]
+    fn tropical_mul(self, rhs: Self) -> Self {
+        Self(self.0.scalar_add(rhs.0))
+    }
+
+    #[inline(always)]
+    fn value(&self) -> T {
+        self.0
+    }
+
+    #[inline(always)]
+    fn from_scalar(s: T) -> Self {
+        Self(s)
+    }
+}
+
+impl<T: TropicalScalar> TropicalWithArgmax for TropicalMinPlus<T> {
+    type Index = u32;
+
+    #[inline(always)]
+    fn tropical_add_argmax(self, self_idx: u32, rhs: Self, rhs_idx: u32) -> (Self, u32) {
+        // For min, we track argmin
+        if self.0 <= rhs.0 {
+            (self, self_idx)
+        } else {
+            (rhs, rhs_idx)
+        }
+    }
+}
+
+impl<T: TropicalScalar> SimdTropical for TropicalMinPlus<T> {
+    const SIMD_AVAILABLE: bool = true;
+    const SIMD_WIDTH: usize = 8;
+}
+
+impl<T: TropicalScalar> Add for TropicalMinPlus<T> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        self.tropical_add(rhs)
+    }
+}
+
+impl<T: TropicalScalar> Mul for TropicalMinPlus<T> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self::Output {
+        self.tropical_mul(rhs)
+    }
+}
+
+impl<T: TropicalScalar> Default for TropicalMinPlus<T> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::tropical_zero()
+    }
+}
+
+impl<T: TropicalScalar> fmt::Debug for TropicalMinPlus<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TropicalMinPlus({})", self.0)
+    }
+}
+
+impl<T: TropicalScalar> fmt::Display for TropicalMinPlus<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<T: TropicalScalar> From<T> for TropicalMinPlus<T> {
+    #[inline(always)]
+    fn from(value: T) -> Self {
+        Self(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_semiring_identity() {
+        let a = TropicalMinPlus::new(5.0f64);
+        let zero = TropicalMinPlus::tropical_zero();
+        let one = TropicalMinPlus::tropical_one();
+
+        // a ⊕ 0 = a
+        assert_eq!(a.tropical_add(zero), a);
+        // a ⊗ 1 = a
+        assert_eq!(a.tropical_mul(one), a);
+    }
+
+    #[test]
+    fn test_operations() {
+        let a = TropicalMinPlus::new(3.0f64);
+        let b = TropicalMinPlus::new(5.0f64);
+
+        // min(3, 5) = 3
+        assert_eq!(a.tropical_add(b).0, 3.0);
+        // 3 + 5 = 8
+        assert_eq!(a.tropical_mul(b).0, 8.0);
+    }
+
+    #[test]
+    fn test_shortest_path_scenario() {
+        // Simulating: path cost a=10, path cost b=5, combine = min(10,5) = 5
+        let a = TropicalMinPlus::new(10.0f64);
+        let b = TropicalMinPlus::new(5.0f64);
+        assert_eq!(a.tropical_add(b).0, 5.0);
+
+        // Extending a path: cost=5, edge=3, total = 5+3 = 8
+        let path = TropicalMinPlus::new(5.0f64);
+        let edge = TropicalMinPlus::new(3.0f64);
+        assert_eq!(path.tropical_mul(edge).0, 8.0);
+    }
+}

@@ -1,0 +1,19 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# Cargo lock for libraries (optional - can include for reproducibility)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Benchmarks
+/benchmarks/bench_c_cuda

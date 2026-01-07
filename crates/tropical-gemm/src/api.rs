@@ -1,0 +1,264 @@
+use tropical_gemm_core::{GemmWithArgmax, Transpose};
+use tropical_gemm_simd::{tropical_gemm_dispatch, KernelDispatch};
+use tropical_types::{TropicalSemiring, TropicalWithArgmax};
+
+/// Simple tropical matrix multiplication: C = A ⊗ B
+///
+/// Computes C[i,j] = ⊕_k (A[i,k] ⊗ B[k,j])
+///
+/// # Arguments
+/// - `a`: Matrix A data in row-major order
+/// - `m`: Number of rows in A
+/// - `k`: Number of columns in A / rows in B
+/// - `b`: Matrix B data in row-major order
+/// - `n`: Number of columns in B
+///
+/// # Returns
+/// Result matrix C of size m×n in row-major order
+///
+/// # Example
+///
+/// ```
+/// use tropical_gemm::{tropical_matmul, TropicalMaxPlus};
+///
+/// let a = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
+/// let b = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // 3x2
+///
+/// let c = tropical_matmul::<TropicalMaxPlus<f32>>(&a, 2, 3, &b, 2);
+/// assert_eq!(c.len(), 4); // 2x2 result
+/// ```
+pub fn tropical_matmul<T: TropicalSemiring + KernelDispatch>(
+    a: &[T::Scalar],
+    m: usize,
+    k: usize,
+    b: &[T::Scalar],
+    n: usize,
+) -> Vec<T> {
+    assert_eq!(a.len(), m * k, "A dimensions mismatch");
+    assert_eq!(b.len(), k * n, "B dimensions mismatch");
+
+    let mut c = vec![T::tropical_zero(); m * n];
+
+    unsafe {
+        tropical_gemm_dispatch::<T>(
+            m,
+            n,
+            k,
+            a.as_ptr(),
+            k,
+            Transpose::NoTrans,
+            b.as_ptr(),
+            n,
+            Transpose::NoTrans,
+            c.as_mut_ptr(),
+            n,
+        );
+    }
+
+    c
+}
+
+/// Tropical matrix multiplication with argmax tracking.
+///
+/// Returns both the result matrix and the argmax indices indicating
+/// which k produced each optimal C[i,j].
+///
+/// # Example
+///
+/// ```
+/// use tropical_gemm::{tropical_matmul_with_argmax, TropicalMaxPlus};
+///
+/// let a = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
+/// let b = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0]; // 3x2
+///
+/// let result = tropical_matmul_with_argmax::<TropicalMaxPlus<f64>>(&a, 2, 3, &b, 2);
+/// assert_eq!(result.m, 2);
+/// assert_eq!(result.n, 2);
+/// ```
+pub fn tropical_matmul_with_argmax<T: TropicalWithArgmax<Index = u32> + KernelDispatch>(
+    a: &[T::Scalar],
+    m: usize,
+    k: usize,
+    b: &[T::Scalar],
+    n: usize,
+) -> GemmWithArgmax<T> {
+    assert_eq!(a.len(), m * k, "A dimensions mismatch");
+    assert_eq!(b.len(), k * n, "B dimensions mismatch");
+
+    let mut result = GemmWithArgmax::new(m, n);
+
+    unsafe {
+        tropical_gemm_core::tropical_gemm_with_argmax_portable::<T>(
+            m,
+            n,
+            k,
+            a.as_ptr(),
+            k,
+            Transpose::NoTrans,
+            b.as_ptr(),
+            n,
+            Transpose::NoTrans,
+            &mut result,
+        );
+    }
+
+    result
+}
+
+/// Builder for configuring tropical GEMM operations.
+///
+/// Provides a fluent API for setting options like transposition,
+/// alpha/beta scaling, and output preferences.
+///
+/// # Example
+///
+/// ```
+/// use tropical_gemm::{TropicalGemm, TropicalMaxPlus, TropicalSemiring};
+///
+/// let a = vec![1.0f32; 6]; // 2x3
+/// let b = vec![1.0f32; 6]; // 3x2
+/// let mut c = vec![TropicalMaxPlus::tropical_zero(); 4]; // 2x2
+///
+/// TropicalGemm::<TropicalMaxPlus<f32>>::new(2, 2, 3)
+///     .execute(&a, 3, &b, 2, &mut c, 2);
+/// ```
+pub struct TropicalGemm<T: TropicalSemiring> {
+    m: usize,
+    n: usize,
+    k: usize,
+    trans_a: Transpose,
+    trans_b: Transpose,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: TropicalSemiring + KernelDispatch> TropicalGemm<T> {
+    /// Create a new GEMM builder.
+    pub fn new(m: usize, n: usize, k: usize) -> Self {
+        Self {
+            m,
+            n,
+            k,
+            trans_a: Transpose::NoTrans,
+            trans_b: Transpose::NoTrans,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Transpose matrix A.
+    pub fn trans_a(mut self) -> Self {
+        self.trans_a = Transpose::Trans;
+        self
+    }
+
+    /// Transpose matrix B.
+    pub fn trans_b(mut self) -> Self {
+        self.trans_b = Transpose::Trans;
+        self
+    }
+
+    /// Execute the GEMM operation.
+    ///
+    /// # Arguments
+    /// - `a`: Matrix A data
+    /// - `lda`: Leading dimension of A
+    /// - `b`: Matrix B data
+    /// - `ldb`: Leading dimension of B
+    /// - `c`: Output matrix C (must be pre-allocated)
+    /// - `ldc`: Leading dimension of C
+    pub fn execute(
+        self,
+        a: &[T::Scalar],
+        lda: usize,
+        b: &[T::Scalar],
+        ldb: usize,
+        c: &mut [T],
+        ldc: usize,
+    ) {
+        unsafe {
+            tropical_gemm_dispatch::<T>(
+                self.m,
+                self.n,
+                self.k,
+                a.as_ptr(),
+                lda,
+                self.trans_a,
+                b.as_ptr(),
+                ldb,
+                self.trans_b,
+                c.as_mut_ptr(),
+                ldc,
+            );
+        }
+    }
+}
+
+/// BLAS-style GEMM interface.
+///
+/// C = A ⊗ B
+///
+/// # Safety
+/// All pointers must be valid for the specified dimensions.
+pub unsafe fn tropical_gemm<T: TropicalSemiring + KernelDispatch>(
+    m: usize,
+    n: usize,
+    k: usize,
+    a: *const T::Scalar,
+    lda: usize,
+    trans_a: Transpose,
+    b: *const T::Scalar,
+    ldb: usize,
+    trans_b: Transpose,
+    c: *mut T,
+    ldc: usize,
+) {
+    tropical_gemm_dispatch::<T>(m, n, k, a, lda, trans_a, b, ldb, trans_b, c, ldc);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tropical_types::TropicalMaxPlus;
+
+    #[test]
+    fn test_tropical_matmul() {
+        let a = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+
+        let c = tropical_matmul::<TropicalMaxPlus<f64>>(&a, 2, 3, &b, 2);
+
+        // C[0,0] = max(1+1, 2+3, 3+5) = 8
+        assert_eq!(c[0].0, 8.0);
+        // C[0,1] = max(1+2, 2+4, 3+6) = 9
+        assert_eq!(c[1].0, 9.0);
+        // C[1,0] = max(4+1, 5+3, 6+5) = 11
+        assert_eq!(c[2].0, 11.0);
+        // C[1,1] = max(4+2, 5+4, 6+6) = 12
+        assert_eq!(c[3].0, 12.0);
+    }
+
+    #[test]
+    fn test_tropical_matmul_with_argmax() {
+        let a = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+
+        let result = tropical_matmul_with_argmax::<TropicalMaxPlus<f64>>(&a, 2, 3, &b, 2);
+
+        assert_eq!(result.get(0, 0).0, 8.0);
+        assert_eq!(result.get_argmax(0, 0), 2); // k=2 produced max
+
+        assert_eq!(result.get(1, 1).0, 12.0);
+        assert_eq!(result.get_argmax(1, 1), 2); // k=2 produced max
+    }
+
+    #[test]
+    fn test_builder_api() {
+        let a = vec![1.0f32; 6];
+        let b = vec![1.0f32; 6];
+        let mut c = vec![TropicalMaxPlus::tropical_zero(); 4];
+
+        TropicalGemm::<TropicalMaxPlus<f32>>::new(2, 2, 3).execute(&a, 3, &b, 2, &mut c, 2);
+
+        // C[0,0] = max(1+1, 1+1, 1+1) = 2 (tropical mul is addition, tropical add is max)
+        assert_eq!(c[0].0, 2.0);
+    }
+}
