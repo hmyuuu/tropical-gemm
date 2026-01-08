@@ -20,29 +20,30 @@ High-performance tropical matrix multiplication in Rust with SIMD and CUDA backe
 [dependencies]
 tropical-gemm = "0.1"
 
-# With CUDA support
-tropical-gemm = { version = "0.1", features = ["cuda"] }
+# For GPU acceleration, add:
+tropical-gemm-cuda = "0.1"
 ```
 
-## Usage
+## Quick Start
 
 ### CPU (SIMD-optimized)
 
 ```rust
-use tropical_gemm::prelude::*;
+use tropical_gemm::{tropical_matmul, TropicalMaxPlus};
 
 let a = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
 let b = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // 3x2
 
 // C[i,j] = max_k(A[i,k] + B[k,j])
 let c = tropical_matmul::<TropicalMaxPlus<f32>>(&a, 2, 3, &b, 2);
+assert_eq!(c[0].value(), 8.0); // max(1+1, 2+3, 3+5) = 8
 ```
 
 ### GPU (CUDA)
 
 ```rust
-use tropical_gemm::cuda::{tropical_matmul_gpu, CudaContext, GpuMatrix};
-use tropical_types::TropicalMaxPlus;
+use tropical_gemm::TropicalMaxPlus;
+use tropical_gemm_cuda::{tropical_matmul_gpu, CudaContext, GpuMatrix};
 
 // One-shot API (handles memory automatically)
 let c = tropical_matmul_gpu::<TropicalMaxPlus<f32>>(&a, m, k, &b, n)?;
@@ -51,9 +52,44 @@ let c = tropical_matmul_gpu::<TropicalMaxPlus<f32>>(&a, m, k, &b, n)?;
 let ctx = CudaContext::new()?;
 let a_gpu = GpuMatrix::from_host_row_major(&ctx, &a, m, k)?;
 let b_gpu = GpuMatrix::from_host_row_major(&ctx, &b, k, n)?;
-let c_gpu = tropical_matmul_gpu_with_ctx::<TropicalMaxPlus<f32>>(&ctx, &a_gpu, &b_gpu)?;
+let c_gpu = tropical_gemm_cuda::tropical_matmul_gpu_with_ctx::<TropicalMaxPlus<f32>>(&ctx, &a_gpu, &b_gpu)?;
 let c = c_gpu.to_host_row_major(&ctx)?;
 ```
+
+### Argmax Tracking (for Backpropagation)
+
+```rust
+use tropical_gemm::{tropical_matmul_with_argmax, TropicalMaxPlus};
+
+let a = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
+let b = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0]; // 3x2
+
+let result = tropical_matmul_with_argmax::<TropicalMaxPlus<f64>>(&a, 2, 3, &b, 2);
+
+// Get the optimal value and which k produced it
+let value = result.get(0, 0).value(); // 8.0
+let k_idx = result.get_argmax(0, 0);  // 2 (k=2 gave max)
+```
+
+GPU argmax is also available:
+
+```rust
+use tropical_gemm::TropicalMaxPlus;
+use tropical_gemm_cuda::tropical_matmul_gpu_with_argmax;
+
+let (c, argmax) = tropical_matmul_gpu_with_argmax::<TropicalMaxPlus<f32>>(&a, m, k, &b, n)?;
+// argmax[i*n + j] = k such that C[i,j] = A[i,k] + B[k,j]
+```
+
+## Supported Semirings
+
+| Type | Addition (⊕) | Multiplication (⊗) | Zero | One | Use Case |
+|------|--------------|-------------------|------|-----|----------|
+| `TropicalMaxPlus<T>` | max | + | -∞ | 0 | Viterbi, longest path |
+| `TropicalMinPlus<T>` | min | + | +∞ | 0 | Shortest path, Dijkstra |
+| `TropicalMaxMul<T>` | max | × | 0 | 1 | Probability (non-log) |
+| `TropicalAndOr` | OR | AND | false | true | Graph reachability |
+| `CountingTropical<T,C>` | max+count | +,× | (-∞,0) | (0,1) | Path counting |
 
 ## Benchmark Results
 
@@ -68,9 +104,9 @@ Tested on NVIDIA RTX A4500 (Ampere, sm_86).
 | 1024 | 262.3         | 0.358           | **733x** |
 | 2048 | 2091.6        | 2.510           | **833x** |
 
-### Rust CUDA vs C Reference (TropicalGemm_Cuda)
+### Rust CUDA vs C Reference
 
-Comparison with the optimized C library from [TropicalGemm_Cuda](https://github.com/ArrogantGao/TropicalGemm_Cuda):
+Comparison with [TropicalGemm_Cuda](https://github.com/ArrogantGao/TropicalGemm_Cuda):
 
 | Size | C Library (ms) | Rust CUDA (ms) | Ratio |
 |------|----------------|----------------|-------|
@@ -79,26 +115,19 @@ Comparison with the optimized C library from [TropicalGemm_Cuda](https://github.
 | 1024 | 0.315          | 0.358          | 1.14x |
 | 2048 | 2.224          | 2.509          | 1.13x |
 
-The C library is ~13-16% faster due to pre-compiled PTX vs runtime compilation. Both implementations use the same optimized kernel algorithm with shared memory tiling.
-
-### All Semirings (GPU Kernel Time)
-
-| Size | MaxPlus (ms) | MinPlus (ms) | MaxMul (ms) |
-|------|--------------|--------------|-------------|
-| 256  | 0.032        | 0.032        | 0.032       |
-| 512  | 0.086        | 0.087        | 0.086       |
-| 1024 | 0.358        | 0.358        | 0.359       |
-| 2048 | 2.509        | 2.514        | 2.521       |
+The C library is ~13-16% faster due to pre-compiled PTX vs runtime compilation.
 
 ## Crate Structure
 
 ```
 tropical-gemm/
-├── tropical-types      # Semiring type definitions
-├── tropical-gemm-core  # Portable GEMM algorithms
-├── tropical-gemm-simd  # SIMD kernels (AVX-512, AVX2, NEON)
-├── tropical-gemm-cuda  # CUDA backend
-└── tropical-gemm       # Unified API
+├── tropical-gemm       # Main crate: types, CPU backend, public API
+│   ├── types/          # Semiring type definitions
+│   ├── core/           # BLIS-style GEMM algorithms
+│   └── simd/           # SIMD kernels (AVX-512, AVX2, NEON)
+│
+└── tropical-gemm-cuda  # GPU backend (optional)
+    └── kernels/        # CUDA kernel source
 ```
 
 ## Running Benchmarks
@@ -108,8 +137,7 @@ tropical-gemm/
 cargo run --release --example bench_rust -p tropical-gemm
 
 # CUDA vs CPU benchmark
-LD_LIBRARY_PATH=/usr/local/cuda-12.6/targets/x86_64-linux/lib:$LD_LIBRARY_PATH \
-  cargo run --release --example bench_cuda_vs_cpu -p tropical-gemm-cuda
+cargo run --release --example bench_cuda_vs_cpu -p tropical-gemm-cuda
 ```
 
 ## License
