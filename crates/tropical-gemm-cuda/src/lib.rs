@@ -497,4 +497,193 @@ mod tests {
         );
         assert_eq!(argmax[3], 2, "argmax[1,1] = {}, expected 2", argmax[3]);
     }
+
+    #[test]
+    fn test_argmax_finite_difference_maxplus() {
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        let m = 4;
+        let k = 5;
+        let n = 3;
+        let epsilon = 1e-3f32; // Larger epsilon for better numerical stability
+
+        // Random-ish matrices with distinct values to avoid ties
+        let mut a: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.7 - 3.0).collect();
+        let b: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.5 - 2.0).collect();
+
+        // Compute C and argmax
+        let (c, argmax) =
+            tropical_matmul_gpu_with_argmax::<TropicalMaxPlus<f32>>(&a, m, k, &b, n).unwrap();
+
+        // Test finite difference for each element of A
+        for i in 0..m {
+            for kk in 0..k {
+                // Perturb A[i, kk]
+                let a_idx = i * k + kk;
+                a[a_idx] += epsilon;
+
+                // Recompute C with perturbed A
+                let (c_perturbed, _) =
+                    tropical_matmul_gpu_with_argmax::<TropicalMaxPlus<f32>>(&a, m, k, &b, n)
+                        .unwrap();
+
+                // Restore A
+                a[a_idx] -= epsilon;
+
+                // Check gradient for each C[i, j]
+                for j in 0..n {
+                    let c_idx = i * n + j;
+                    let numerical_grad = (c_perturbed[c_idx] - c[c_idx]) / epsilon;
+                    let expected_grad = if argmax[c_idx] == kk as i32 {
+                        1.0
+                    } else {
+                        0.0
+                    };
+
+                    assert!(
+                        (numerical_grad - expected_grad).abs() < 0.05,
+                        "Finite diff failed at A[{},{}] -> C[{},{}]: \
+                         numerical={}, expected={}, argmax={}",
+                        i,
+                        kk,
+                        i,
+                        j,
+                        numerical_grad,
+                        expected_grad,
+                        argmax[c_idx]
+                    );
+                }
+            }
+        }
+        println!("MaxPlus finite difference test passed for {}x{}x{} matrices", m, k, n);
+    }
+
+    #[test]
+    fn test_argmax_finite_difference_minplus() {
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        let m = 4;
+        let k = 5;
+        let n = 3;
+        let epsilon = 1e-3f32; // Larger epsilon for better numerical stability
+
+        // Random-ish matrices with distinct values to avoid ties
+        let mut a: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.7 - 3.0).collect();
+        let b: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.5 - 2.0).collect();
+
+        // Compute C and argmax (argmin for MinPlus)
+        let (c, argmax) =
+            tropical_matmul_gpu_with_argmax::<TropicalMinPlus<f32>>(&a, m, k, &b, n).unwrap();
+
+        // Test finite difference for each element of A
+        for i in 0..m {
+            for kk in 0..k {
+                // Perturb A[i, kk]
+                let a_idx = i * k + kk;
+                a[a_idx] += epsilon;
+
+                // Recompute C with perturbed A
+                let (c_perturbed, _) =
+                    tropical_matmul_gpu_with_argmax::<TropicalMinPlus<f32>>(&a, m, k, &b, n)
+                        .unwrap();
+
+                // Restore A
+                a[a_idx] -= epsilon;
+
+                // Check gradient for each C[i, j]
+                for j in 0..n {
+                    let c_idx = i * n + j;
+                    let numerical_grad = (c_perturbed[c_idx] - c[c_idx]) / epsilon;
+                    let expected_grad = if argmax[c_idx] == kk as i32 {
+                        1.0
+                    } else {
+                        0.0
+                    };
+
+                    assert!(
+                        (numerical_grad - expected_grad).abs() < 0.05,
+                        "Finite diff failed at A[{},{}] -> C[{},{}]: \
+                         numerical={}, expected={}, argmax={}",
+                        i,
+                        kk,
+                        i,
+                        j,
+                        numerical_grad,
+                        expected_grad,
+                        argmax[c_idx]
+                    );
+                }
+            }
+        }
+        println!("MinPlus finite difference test passed for {}x{}x{} matrices", m, k, n);
+    }
+
+    #[test]
+    fn test_argmax_finite_difference_b_matrix() {
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        let m = 3;
+        let k = 4;
+        let n = 5;
+        let epsilon = 1e-3f32; // Larger epsilon for better numerical stability
+
+        // Random-ish matrices with distinct values
+        let a: Vec<f32> = (0..m * k).map(|i| (i as f32) * 0.6 - 2.0).collect();
+        let mut b: Vec<f32> = (0..k * n).map(|i| (i as f32) * 0.4 - 1.5).collect();
+
+        // Compute C and argmax
+        let (c, argmax) =
+            tropical_matmul_gpu_with_argmax::<TropicalMaxPlus<f32>>(&a, m, k, &b, n).unwrap();
+
+        // Test finite difference for each element of B
+        for kk in 0..k {
+            for j in 0..n {
+                // Perturb B[kk, j]
+                let b_idx = kk * n + j;
+                b[b_idx] += epsilon;
+
+                // Recompute C with perturbed B
+                let (c_perturbed, _) =
+                    tropical_matmul_gpu_with_argmax::<TropicalMaxPlus<f32>>(&a, m, k, &b, n)
+                        .unwrap();
+
+                // Restore B
+                b[b_idx] -= epsilon;
+
+                // Check gradient for each C[i, j]
+                for i in 0..m {
+                    let c_idx = i * n + j;
+                    let numerical_grad = (c_perturbed[c_idx] - c[c_idx]) / epsilon;
+                    let expected_grad = if argmax[c_idx] == kk as i32 {
+                        1.0
+                    } else {
+                        0.0
+                    };
+
+                    assert!(
+                        (numerical_grad - expected_grad).abs() < 0.05,
+                        "Finite diff failed at B[{},{}] -> C[{},{}]: \
+                         numerical={}, expected={}, argmax={}",
+                        kk,
+                        j,
+                        i,
+                        j,
+                        numerical_grad,
+                        expected_grad,
+                        argmax[c_idx]
+                    );
+                }
+            }
+        }
+        println!(
+            "MaxPlus B-matrix finite difference test passed for {}x{}x{} matrices",
+            m, k, n
+        );
+    }
 }
