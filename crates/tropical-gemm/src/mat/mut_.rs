@@ -87,3 +87,92 @@ impl<'a, S: TropicalSemiring> MatMut<'a, S> {
         &mut self.data[i * self.ncols + j]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TropicalMaxPlus;
+
+    #[test]
+    fn test_matmut_from_slice() {
+        let mut data = vec![
+            TropicalMaxPlus(1.0f64),
+            TropicalMaxPlus(2.0),
+            TropicalMaxPlus(3.0),
+            TropicalMaxPlus(4.0),
+        ];
+        let m = MatMut::from_slice(&mut data, 2, 2);
+        assert_eq!(m.nrows(), 2);
+        assert_eq!(m.ncols(), 2);
+    }
+
+    #[test]
+    fn test_matmut_get() {
+        let mut data = vec![
+            TropicalMaxPlus(1.0f64),
+            TropicalMaxPlus(2.0),
+            TropicalMaxPlus(3.0),
+            TropicalMaxPlus(4.0),
+        ];
+        let m = MatMut::from_slice(&mut data, 2, 2);
+        assert_eq!(m.get(0, 0).0, 1.0);
+        assert_eq!(m.get(0, 1).0, 2.0);
+        assert_eq!(m.get(1, 0).0, 3.0);
+        assert_eq!(m.get(1, 1).0, 4.0);
+    }
+
+    #[test]
+    fn test_matmut_get_mut() {
+        let mut data = vec![
+            TropicalMaxPlus(1.0f64),
+            TropicalMaxPlus(2.0),
+            TropicalMaxPlus(3.0),
+            TropicalMaxPlus(4.0),
+        ];
+        let mut m = MatMut::from_slice(&mut data, 2, 2);
+        *m.get_mut(0, 0) = TropicalMaxPlus(10.0);
+        assert_eq!(m.get(0, 0).0, 10.0);
+    }
+
+    #[test]
+    fn test_matmut_as_mut_slice() {
+        let mut data = vec![
+            TropicalMaxPlus(1.0f64),
+            TropicalMaxPlus(2.0),
+            TropicalMaxPlus(3.0),
+            TropicalMaxPlus(4.0),
+        ];
+        let mut m = MatMut::from_slice(&mut data, 2, 2);
+        let slice = m.as_mut_slice();
+        slice[0] = TropicalMaxPlus(100.0);
+        assert_eq!(data[0].0, 100.0);
+    }
+
+    #[test]
+    fn test_matmut_as_mut_ptr() {
+        let mut data = vec![
+            TropicalMaxPlus(1.0f64),
+            TropicalMaxPlus(2.0),
+            TropicalMaxPlus(3.0),
+            TropicalMaxPlus(4.0),
+        ];
+        let mut m = MatMut::from_slice(&mut data, 2, 2);
+        let ptr = m.as_mut_ptr();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_matmut_debug() {
+        let mut data = vec![TropicalMaxPlus(1.0f64), TropicalMaxPlus(2.0)];
+        let m = MatMut::from_slice(&mut data, 1, 2);
+        let debug_str = format!("{:?}", m);
+        assert!(debug_str.contains("MatMut"));
+    }
+
+    #[test]
+    #[should_panic(expected = "data length")]
+    fn test_matmut_size_mismatch() {
+        let mut data = vec![TropicalMaxPlus(1.0f64), TropicalMaxPlus(2.0)];
+        let _ = MatMut::from_slice(&mut data, 2, 2); // Should panic
+    }
+}

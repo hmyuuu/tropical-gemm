@@ -90,6 +90,31 @@ mod tests {
     }
 
     #[test]
+    fn test_matref_mul_matref_by_value() {
+        let a_data = [1.0f64, 2.0, 3.0, 4.0];
+        let b_data = [1.0f64, 2.0, 3.0, 4.0];
+
+        let a = MatRef::<TropicalMaxPlus<f64>>::from_slice(&a_data, 2, 2);
+        let b = MatRef::<TropicalMaxPlus<f64>>::from_slice(&b_data, 2, 2);
+
+        // MatRef is Copy, so this tests the by-value multiplication
+        let c = a * b;
+
+        assert_eq!(c[(0, 0)].0, 5.0);
+    }
+
+    #[test]
+    fn test_mat_ref_mul_matref() {
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let b_data = [1.0f64, 2.0, 3.0, 4.0];
+        let b = MatRef::<TropicalMaxPlus<f64>>::from_slice(&b_data, 2, 2);
+
+        let c = &a * &b;
+
+        assert_eq!(c[(0, 0)].0, 5.0);
+    }
+
+    #[test]
     fn test_mat_mul_mat() {
         let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
         let b = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);

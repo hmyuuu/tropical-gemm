@@ -247,4 +247,197 @@ mod tests {
         // C[1,1] = min(4+2, 5+4, 6+6) = 6
         assert_eq!(c[(1, 1)].0, 6.0);
     }
+
+    #[test]
+    fn test_mat_from_vec() {
+        let data = vec![
+            TropicalMaxPlus(1.0f64),
+            TropicalMaxPlus(2.0),
+            TropicalMaxPlus(3.0),
+            TropicalMaxPlus(4.0),
+        ];
+        let m = Mat::from_vec(data, 2, 2);
+        assert_eq!(m.nrows(), 2);
+        assert_eq!(m.ncols(), 2);
+        assert_eq!(m[(0, 0)].0, 1.0);
+        assert_eq!(m[(1, 1)].0, 4.0);
+    }
+
+    #[test]
+    fn test_mat_as_slice() {
+        let m = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let slice = m.as_slice();
+        assert_eq!(slice.len(), 4);
+        assert_eq!(slice[0].0, 1.0);
+        assert_eq!(slice[3].0, 4.0);
+    }
+
+    #[test]
+    fn test_mat_as_mut_slice() {
+        let mut m = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let slice = m.as_mut_slice();
+        slice[0] = TropicalMaxPlus(100.0);
+        assert_eq!(m[(0, 0)].0, 100.0);
+    }
+
+    #[test]
+    fn test_mat_as_mut_ptr() {
+        let mut m = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let ptr = m.as_mut_ptr();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_mat_index_mut() {
+        let mut m = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        m[(0, 0)] = TropicalMaxPlus(10.0);
+        m[(1, 1)] = TropicalMaxPlus(40.0);
+        assert_eq!(m[(0, 0)].0, 10.0);
+        assert_eq!(m[(1, 1)].0, 40.0);
+    }
+
+    #[test]
+    fn test_mat_matmul_ref() {
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let b_data = [1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b = MatRef::<TropicalMaxPlus<f64>>::from_slice(&b_data, 3, 2);
+
+        let c = a.matmul_ref(&b);
+
+        // C[0,0] = max(1+1, 2+3, 3+5) = 8
+        assert_eq!(c[(0, 0)].0, 8.0);
+        // C[1,1] = max(4+2, 5+4, 6+6) = 12
+        assert_eq!(c[(1, 1)].0, 12.0);
+    }
+
+    #[test]
+    fn test_matref_copy_clone() {
+        let data = [1.0f64, 2.0, 3.0, 4.0];
+        let a = MatRef::<TropicalMaxPlus<f64>>::from_slice(&data, 2, 2);
+        let b = a; // Copy
+        let c = a.clone(); // Clone
+        assert_eq!(a.get(0, 0), b.get(0, 0));
+        assert_eq!(a.get(0, 0), c.get(0, 0));
+    }
+
+    #[test]
+    fn test_matref_to_owned() {
+        let data = [1.0f64, 2.0, 3.0, 4.0];
+        let a = MatRef::<TropicalMaxPlus<f64>>::from_slice(&data, 2, 2);
+        let owned = a.to_owned();
+        assert_eq!(owned.nrows(), 2);
+        assert_eq!(owned.ncols(), 2);
+        assert_eq!(owned[(0, 0)].0, 1.0);
+    }
+
+    #[test]
+    fn test_matref_debug() {
+        let data = [1.0f64, 2.0];
+        let m = MatRef::<TropicalMaxPlus<f64>>::from_slice(&data, 1, 2);
+        let debug_str = format!("{:?}", m);
+        assert!(debug_str.contains("MatRef"));
+    }
+
+    #[test]
+    fn test_mat_clone() {
+        let m = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let m2 = m.clone();
+        assert_eq!(m2[(0, 0)].0, 1.0);
+        assert_eq!(m2[(1, 1)].0, 4.0);
+    }
+
+    #[test]
+    fn test_mat_debug() {
+        let m = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0], 1, 2);
+        let debug_str = format!("{:?}", m);
+        assert!(debug_str.contains("Mat"));
+    }
+
+    #[test]
+    fn test_matwithargmax_get_value() {
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let b = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+
+        let result = a.matmul_argmax(&b);
+
+        // Test get_value (scalar extraction without trait import)
+        assert_eq!(result.get_value(0, 0), 8.0);
+        assert_eq!(result.get_value(1, 1), 12.0);
+    }
+
+    #[test]
+    fn test_matwithargmax_nrows_ncols() {
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let b = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+
+        let result = a.matmul_argmax(&b);
+
+        assert_eq!(result.nrows(), 2);
+        assert_eq!(result.ncols(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "data length")]
+    fn test_mat_from_row_major_size_mismatch() {
+        let _ = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0], 2, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "data length")]
+    fn test_mat_from_vec_size_mismatch() {
+        let data = vec![TropicalMaxPlus(1.0f64), TropicalMaxPlus(2.0)];
+        let _ = Mat::from_vec(data, 2, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "data length")]
+    fn test_matref_from_slice_size_mismatch() {
+        let data = [1.0f64, 2.0];
+        let _ = MatRef::<TropicalMaxPlus<f64>>::from_slice(&data, 2, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "dimension mismatch")]
+    fn test_matmul_dimension_mismatch() {
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let b = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+        let _ = a.matmul(&b); // Should panic: A is 2x2, B is 3x2
+    }
+
+    #[test]
+    #[should_panic(expected = "dimension mismatch")]
+    fn test_matref_matmul_dimension_mismatch() {
+        let a_data = [1.0f64, 2.0, 3.0, 4.0];
+        let b_data = [1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let a = MatRef::<TropicalMaxPlus<f64>>::from_slice(&a_data, 2, 2);
+        let b = MatRef::<TropicalMaxPlus<f64>>::from_slice(&b_data, 3, 2);
+        let _ = a.matmul(&b); // Should panic
+    }
+
+    #[test]
+    #[should_panic(expected = "dimension mismatch")]
+    fn test_matmul_argmax_dimension_mismatch() {
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let b = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+        let _ = a.matmul_argmax(&b); // Should panic
+    }
+
+    #[test]
+    #[should_panic(expected = "dimension mismatch")]
+    fn test_matref_matmul_argmax_dimension_mismatch() {
+        let a_data = [1.0f64, 2.0, 3.0, 4.0];
+        let b_data = [1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let a = MatRef::<TropicalMaxPlus<f64>>::from_slice(&a_data, 2, 2);
+        let b = MatRef::<TropicalMaxPlus<f64>>::from_slice(&b_data, 3, 2);
+        let _ = a.matmul_argmax(&b); // Should panic
+    }
+
+    #[test]
+    #[should_panic(expected = "dimension mismatch")]
+    fn test_mat_matmul_ref_dimension_mismatch() {
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+        let b_data = [1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let b = MatRef::<TropicalMaxPlus<f64>>::from_slice(&b_data, 3, 2);
+        let _ = a.matmul_ref(&b); // Should panic
+    }
 }
