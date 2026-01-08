@@ -35,11 +35,13 @@
 
 mod context;
 mod error;
+mod gpu_mat;
 mod kernels;
 mod memory;
 
 pub use context::CudaContext;
 pub use error::{CudaError, Result};
+pub use gpu_mat::{GpuMat, GpuMatWithArgmax};
 pub use kernels::{CudaKernel, CudaKernelWithArgmax};
 pub use memory::{ArgmaxIndex, GpuMatrix, GpuMatrixWithArgmax};
 
