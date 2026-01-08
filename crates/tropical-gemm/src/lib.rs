@@ -5,18 +5,19 @@
 //!
 //! # GPU Acceleration
 //!
-//! Enable the `cuda` feature for GPU-accelerated operations:
+//! For GPU-accelerated operations, add the `tropical-gemm-cuda` crate:
 //!
 //! ```toml
 //! [dependencies]
-//! tropical-gemm = { version = "0.1", features = ["cuda"] }
+//! tropical-gemm = "0.1"
+//! tropical-gemm-cuda = "0.1"
 //! ```
 //!
 //! Then use the GPU API:
 //!
 //! ```ignore
-//! use tropical_gemm::cuda::{tropical_matmul_gpu, CudaContext};
 //! use tropical_gemm::TropicalMaxPlus;
+//! use tropical_gemm_cuda::{tropical_matmul_gpu, CudaContext};
 //!
 //! let c = tropical_matmul_gpu::<TropicalMaxPlus<f32>>(&a, m, k, &b, n)?;
 //! ```
@@ -37,6 +38,8 @@
 //!
 //! # Quick Start
 //!
+//! ## Function-based API
+//!
 //! ```
 //! use tropical_gemm::{tropical_matmul, TropicalMaxPlus, TropicalSemiring};
 //!
@@ -49,6 +52,30 @@
 //!
 //! // C[i,j] = max_k(A[i,k] + B[k,j])
 //! assert_eq!(c[0].value(), 8.0); // max(1+1, 2+3, 3+5) = 8
+//! ```
+//!
+//! ## Matrix-based API (faer-style)
+//!
+//! ```
+//! use tropical_gemm::{Mat, MatRef, MaxPlus, TropicalSemiring};
+//!
+//! // Create matrix views from raw data
+//! let a_data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+//! let b_data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+//!
+//! let a = MatRef::<MaxPlus<f32>>::from_slice(&a_data, 2, 3);
+//! let b = MatRef::<MaxPlus<f32>>::from_slice(&b_data, 3, 2);
+//!
+//! // Matrix multiplication using operators
+//! let c = &a * &b;
+//! assert_eq!(c[(0, 0)].value(), 8.0);
+//!
+//! // Or using methods
+//! let c = a.matmul(&b);
+//!
+//! // Factory methods
+//! let zeros = Mat::<MaxPlus<f32>>::zeros(3, 3);
+//! let identity = Mat::<MaxPlus<f32>>::identity(3);
 //! ```
 //!
 //! # Argmax Tracking (Backpropagation)
@@ -97,35 +124,44 @@
 //!     .execute(&a, 64, &b, 64, &mut c, 64);
 //! ```
 
+// Internal modules
+pub mod core;
+pub mod mat;
+pub mod simd;
+pub mod types;
+
 mod api;
 mod backend;
 
+// Public API
 pub use api::{tropical_gemm, tropical_matmul, tropical_matmul_with_argmax, TropicalGemm};
 pub use backend::{version_info, Backend};
 
-// Re-export types for convenience
-pub use tropical_gemm_core::{GemmWithArgmax, Layout, Transpose};
-pub use tropical_types::{
-    CountingTropical, TropicalAndOr, TropicalMaxMul, TropicalMaxPlus, TropicalMinPlus,
-    TropicalScalar, TropicalSemiring, TropicalWithArgmax,
+// Re-export commonly used types at crate root
+pub use core::{GemmWithArgmax, Layout, Transpose};
+pub use mat::{Mat, MatMut, MatRef, MatWithArgmax};
+pub use simd::{simd_level, KernelDispatch, SimdLevel};
+pub use types::{
+    CountingTropical, SimdTropical, TropicalAndOr, TropicalMaxMul, TropicalMaxPlus,
+    TropicalMinPlus, TropicalScalar, TropicalSemiring, TropicalWithArgmax,
 };
+
+// Convenient type aliases
+/// Alias for [`TropicalMaxPlus`].
+pub type MaxPlus<T> = TropicalMaxPlus<T>;
+/// Alias for [`TropicalMinPlus`].
+pub type MinPlus<T> = TropicalMinPlus<T>;
+/// Alias for [`TropicalMaxMul`].
+pub type MaxMul<T> = TropicalMaxMul<T>;
+/// Alias for [`TropicalAndOr`].
+pub type AndOr = TropicalAndOr;
 
 /// Prelude module for convenient imports.
 pub mod prelude {
     pub use super::{
-        tropical_matmul, tropical_matmul_with_argmax, Backend, CountingTropical, GemmWithArgmax,
-        Transpose, TropicalAndOr, TropicalGemm, TropicalMaxMul, TropicalMaxPlus, TropicalMinPlus,
+        tropical_matmul, tropical_matmul_with_argmax, AndOr, Backend, CountingTropical,
+        GemmWithArgmax, Mat, MatMut, MatRef, MatWithArgmax, MaxMul, MaxPlus, MinPlus, Transpose,
+        TropicalAndOr, TropicalGemm, TropicalMaxMul, TropicalMaxPlus, TropicalMinPlus,
         TropicalSemiring, TropicalWithArgmax,
-    };
-}
-
-/// CUDA backend for GPU-accelerated tropical GEMM.
-///
-/// This module is only available when the `cuda` feature is enabled.
-#[cfg(feature = "cuda")]
-pub mod cuda {
-    pub use tropical_gemm_cuda::{
-        tropical_gemm_gpu, tropical_matmul_gpu, tropical_matmul_gpu_with_ctx, CudaContext,
-        CudaError, CudaKernel, GpuMatrix, Result,
     };
 }
