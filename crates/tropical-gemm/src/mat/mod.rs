@@ -49,6 +49,15 @@ impl<S: crate::TropicalWithArgmax<Index = u32>> MatWithArgmax<S> {
         self.values[(i, j)]
     }
 
+    /// Get the scalar value at position (i, j).
+    ///
+    /// This is a convenience method that extracts the underlying scalar
+    /// without requiring a trait import.
+    #[inline]
+    pub fn get_value(&self, i: usize, j: usize) -> S::Scalar {
+        self.values[(i, j)].value()
+    }
+
     /// Get the argmax index at position (i, j).
     pub fn get_argmax(&self, i: usize, j: usize) -> u32 {
         self.argmax[i * self.values.ncols() + j]
@@ -185,5 +194,57 @@ mod tests {
         assert_eq!(r.ncols(), 3);
         assert_eq!(r.get(0, 0), 0.0);
         assert_eq!(r.get(1, 2), 5.0);
+    }
+
+    #[test]
+    fn test_mat_matmul_direct() {
+        // Test Mat::matmul directly (no as_ref needed)
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let b = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+
+        let c = a.matmul(&b);
+
+        // C[0,0] = max(1+1, 2+3, 3+5) = 8
+        assert_eq!(c[(0, 0)].0, 8.0);
+        // C[1,1] = max(4+2, 5+4, 6+6) = 12
+        assert_eq!(c[(1, 1)].0, 12.0);
+    }
+
+    #[test]
+    fn test_mat_matmul_argmax_direct() {
+        // Test Mat::matmul_argmax directly
+        let a = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let b = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+
+        let result = a.matmul_argmax(&b);
+
+        assert_eq!(result.get(0, 0).0, 8.0);
+        assert_eq!(result.get_argmax(0, 0), 2); // k=2 gave max
+    }
+
+    #[test]
+    fn test_mat_get_value() {
+        // Test get_value method - no trait import needed
+        let m = Mat::<TropicalMaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+
+        assert_eq!(m.get_value(0, 0), 1.0);
+        assert_eq!(m.get_value(0, 1), 2.0);
+        assert_eq!(m.get_value(1, 0), 3.0);
+        assert_eq!(m.get_value(1, 1), 4.0);
+    }
+
+    #[test]
+    fn test_minplus_mat_matmul_direct() {
+        use crate::TropicalMinPlus;
+
+        let a = Mat::<TropicalMinPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let b = Mat::<TropicalMinPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+
+        let c = a.matmul(&b);
+
+        // C[0,0] = min(1+1, 2+3, 3+5) = 2
+        assert_eq!(c[(0, 0)].0, 2.0);
+        // C[1,1] = min(4+2, 5+4, 6+6) = 6
+        assert_eq!(c[(1, 1)].0, 6.0);
     }
 }

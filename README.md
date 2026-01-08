@@ -26,69 +26,89 @@ tropical-gemm-cuda = "0.1"
 
 ## Quick Start
 
-### CPU (SIMD-optimized)
+### CPU (Matrix API)
 
 ```rust
-use tropical_gemm::{tropical_matmul, TropicalMaxPlus};
+use tropical_gemm::{Mat, MatRef, MaxPlus};
 
-let a = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
-let b = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]; // 3x2
+// Create matrices from raw data
+let a_data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+let b_data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+
+let a = MatRef::<MaxPlus<f32>>::from_slice(&a_data, 2, 3);
+let b = MatRef::<MaxPlus<f32>>::from_slice(&b_data, 3, 2);
 
 // C[i,j] = max_k(A[i,k] + B[k,j])
-let c = tropical_matmul::<TropicalMaxPlus<f32>>(&a, 2, 3, &b, 2);
-assert_eq!(c[0].value(), 8.0); // max(1+1, 2+3, 3+5) = 8
+let c = a.matmul(&b);            // Method syntax
+let c = &a * &b;                  // Operator syntax
+assert_eq!(c.get_value(0, 0), 8.0); // max(1+1, 2+3, 3+5) = 8
+
+// Or use owned matrices with factory methods
+let a = Mat::<MaxPlus<f32>>::from_row_major(&a_data, 2, 3);
+let b = Mat::<MaxPlus<f32>>::from_row_major(&b_data, 3, 2);
+let c = a.matmul(&b);
 ```
 
 ### GPU (CUDA)
 
 ```rust
-use tropical_gemm::TropicalMaxPlus;
-use tropical_gemm_cuda::{tropical_matmul_gpu, CudaContext, GpuMatrix};
+use tropical_gemm::{MatRef, MaxPlus};
+use tropical_gemm_cuda::{CudaContext, GpuMat};
 
-// One-shot API (handles memory automatically)
-let c = tropical_matmul_gpu::<TropicalMaxPlus<f32>>(&a, m, k, &b, n)?;
-
-// Persistent context API (reuse for multiple operations)
 let ctx = CudaContext::new()?;
-let a_gpu = GpuMatrix::from_host_row_major(&ctx, &a, m, k)?;
-let b_gpu = GpuMatrix::from_host_row_major(&ctx, &b, k, n)?;
-let c_gpu = tropical_gemm_cuda::tropical_matmul_gpu_with_ctx::<TropicalMaxPlus<f32>>(&ctx, &a_gpu, &b_gpu)?;
-let c = c_gpu.to_host_row_major(&ctx)?;
+
+// Upload to GPU
+let a = MatRef::<MaxPlus<f32>>::from_slice(&a_data, 2, 3);
+let b = MatRef::<MaxPlus<f32>>::from_slice(&b_data, 3, 2);
+
+let a_gpu = GpuMat::from_matref(&ctx, &a)?;
+let b_gpu = GpuMat::from_matref(&ctx, &b)?;
+
+// Compute on GPU
+let c_gpu = a_gpu.matmul(&ctx, &b_gpu)?;
+
+// Download result
+let c = c_gpu.to_mat(&ctx)?;
 ```
 
 ### Argmax Tracking (for Backpropagation)
 
 ```rust
-use tropical_gemm::{tropical_matmul_with_argmax, TropicalMaxPlus};
+use tropical_gemm::{Mat, MaxPlus};
 
-let a = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
-let b = vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0]; // 3x2
+let a = Mat::<MaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+let b = Mat::<MaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
 
-let result = tropical_matmul_with_argmax::<TropicalMaxPlus<f64>>(&a, 2, 3, &b, 2);
+let result = a.matmul_argmax(&b);
 
 // Get the optimal value and which k produced it
-let value = result.get(0, 0).value(); // 8.0
-let k_idx = result.get_argmax(0, 0);  // 2 (k=2 gave max)
+let value = result.get_value(0, 0); // 8.0
+let k_idx = result.get_argmax(0, 0); // 2 (k=2 gave max)
 ```
 
 GPU argmax is also available:
 
 ```rust
-use tropical_gemm::TropicalMaxPlus;
-use tropical_gemm_cuda::tropical_matmul_gpu_with_argmax;
+use tropical_gemm::{MatRef, MaxPlus};
+use tropical_gemm_cuda::{CudaContext, GpuMat};
 
-let (c, argmax) = tropical_matmul_gpu_with_argmax::<TropicalMaxPlus<f32>>(&a, m, k, &b, n)?;
-// argmax[i*n + j] = k such that C[i,j] = A[i,k] + B[k,j]
+let ctx = CudaContext::new()?;
+let a_gpu = GpuMat::from_matref(&ctx, &a)?;
+let b_gpu = GpuMat::from_matref(&ctx, &b)?;
+
+let result = a_gpu.matmul_argmax(&ctx, &b_gpu)?;
+let result_cpu = result.to_mat_with_argmax(&ctx)?;
+// result_cpu.get_argmax(i, j) = k such that C[i,j] = A[i,k] + B[k,j]
 ```
 
 ## Supported Semirings
 
 | Type | Addition (⊕) | Multiplication (⊗) | Zero | One | Use Case |
 |------|--------------|-------------------|------|-----|----------|
-| `TropicalMaxPlus<T>` | max | + | -∞ | 0 | Viterbi, longest path |
-| `TropicalMinPlus<T>` | min | + | +∞ | 0 | Shortest path, Dijkstra |
-| `TropicalMaxMul<T>` | max | × | 0 | 1 | Probability (non-log) |
-| `TropicalAndOr` | OR | AND | false | true | Graph reachability |
+| `MaxPlus<T>` | max | + | -∞ | 0 | Viterbi, longest path |
+| `MinPlus<T>` | min | + | +∞ | 0 | Shortest path, Dijkstra |
+| `MaxMul<T>` | max | × | 0 | 1 | Probability (non-log) |
+| `AndOr` | OR | AND | false | true | Graph reachability |
 | `CountingTropical<T,C>` | max+count | +,× | (-∞,0) | (0,1) | Path counting |
 
 ## Benchmark Results
@@ -122,6 +142,7 @@ The C library is ~13-16% faster due to pre-compiled PTX vs runtime compilation.
 ```
 tropical-gemm/
 ├── tropical-gemm       # Main crate: types, CPU backend, public API
+│   ├── mat/            # Matrix types (Mat, MatRef, MatMut)
 │   ├── types/          # Semiring type definitions
 │   ├── core/           # BLIS-style GEMM algorithms
 │   └── simd/           # SIMD kernels (AVX-512, AVX2, NEON)

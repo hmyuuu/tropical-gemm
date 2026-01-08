@@ -2,9 +2,11 @@
 
 use std::ops::{Index, IndexMut};
 
-use crate::types::TropicalSemiring;
+use crate::core::Transpose;
+use crate::simd::{tropical_gemm_dispatch, KernelDispatch};
+use crate::types::{TropicalSemiring, TropicalWithArgmax};
 
-use super::MatRef;
+use super::{MatRef, MatWithArgmax};
 
 /// Owned matrix storing semiring values.
 ///
@@ -121,6 +123,25 @@ impl<S: TropicalSemiring> Mat<S> {
         &mut self.data
     }
 
+    /// Get the scalar value at position (i, j).
+    ///
+    /// This is a convenience method that extracts the underlying scalar
+    /// without requiring a trait import.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use tropical_gemm::{Mat, MaxPlus};
+    ///
+    /// let m = Mat::<MaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0], 2, 2);
+    /// assert_eq!(m.get_value(0, 0), 1.0);
+    /// assert_eq!(m.get_value(1, 1), 4.0);
+    /// ```
+    #[inline]
+    pub fn get_value(&self, i: usize, j: usize) -> S::Scalar {
+        self[(i, j)].value()
+    }
+
     /// Convert to an immutable matrix reference.
     ///
     /// The returned reference views the scalar values.
@@ -179,5 +200,163 @@ impl<S: TropicalSemiring> IndexMut<(usize, usize)> for Mat<S> {
             self.ncols
         );
         &mut self.data[i * self.ncols + j]
+    }
+}
+
+// Matrix multiplication methods directly on Mat
+impl<S> Mat<S>
+where
+    S: TropicalSemiring + KernelDispatch,
+    S::Scalar: Copy,
+{
+    /// Perform tropical matrix multiplication: C = A ⊗ B.
+    ///
+    /// Computes C[i,j] = ⊕_k (A[i,k] ⊗ B[k,j])
+    ///
+    /// # Panics
+    ///
+    /// Panics if dimensions don't match (self.ncols != b.nrows).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use tropical_gemm::{Mat, MaxPlus, TropicalSemiring};
+    ///
+    /// let a = Mat::<MaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+    /// let b = Mat::<MaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+    ///
+    /// let c = a.matmul(&b);
+    ///
+    /// // C[0,0] = max(1+1, 2+3, 3+5) = 8
+    /// assert_eq!(c[(0, 0)].value(), 8.0);
+    /// ```
+    pub fn matmul(&self, b: &Mat<S>) -> Mat<S> {
+        assert_eq!(
+            self.ncols, b.nrows,
+            "dimension mismatch: A is {}x{}, B is {}x{}",
+            self.nrows, self.ncols, b.nrows, b.ncols
+        );
+
+        let a_ref = self.as_ref();
+        let b_ref = b.as_ref();
+
+        let mut c = Mat::<S>::zeros(self.nrows, b.ncols);
+
+        unsafe {
+            tropical_gemm_dispatch::<S>(
+                self.nrows,
+                b.ncols,
+                self.ncols,
+                a_ref.as_slice().as_ptr(),
+                self.ncols,
+                Transpose::NoTrans,
+                b_ref.as_slice().as_ptr(),
+                b.ncols,
+                Transpose::NoTrans,
+                c.data.as_mut_ptr(),
+                b.ncols,
+            );
+        }
+
+        c
+    }
+
+    /// Perform tropical matrix multiplication with a MatRef.
+    ///
+    /// This allows mixing owned and reference matrices.
+    pub fn matmul_ref(&self, b: &MatRef<S>) -> Mat<S> {
+        assert_eq!(
+            self.ncols,
+            b.nrows(),
+            "dimension mismatch: A is {}x{}, B is {}x{}",
+            self.nrows,
+            self.ncols,
+            b.nrows(),
+            b.ncols()
+        );
+
+        let a_ref = self.as_ref();
+
+        let mut c = Mat::<S>::zeros(self.nrows, b.ncols());
+
+        unsafe {
+            tropical_gemm_dispatch::<S>(
+                self.nrows,
+                b.ncols(),
+                self.ncols,
+                a_ref.as_slice().as_ptr(),
+                self.ncols,
+                Transpose::NoTrans,
+                b.as_slice().as_ptr(),
+                b.ncols(),
+                Transpose::NoTrans,
+                c.data.as_mut_ptr(),
+                b.ncols(),
+            );
+        }
+
+        c
+    }
+}
+
+// Argmax methods on Mat
+impl<S> Mat<S>
+where
+    S: TropicalWithArgmax<Index = u32> + KernelDispatch,
+    S::Scalar: Copy,
+{
+    /// Perform tropical matrix multiplication with argmax tracking.
+    ///
+    /// Returns both the result matrix and the argmax indices indicating
+    /// which k-index produced each optimal value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use tropical_gemm::{Mat, MaxPlus, TropicalSemiring};
+    ///
+    /// let a = Mat::<MaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+    /// let b = Mat::<MaxPlus<f64>>::from_row_major(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+    ///
+    /// let result = a.matmul_argmax(&b);
+    ///
+    /// assert_eq!(result.get(0, 0).value(), 8.0);
+    /// assert_eq!(result.get_argmax(0, 0), 2); // k=2 gave max
+    /// ```
+    pub fn matmul_argmax(&self, b: &Mat<S>) -> MatWithArgmax<S> {
+        assert_eq!(
+            self.ncols, b.nrows,
+            "dimension mismatch: A is {}x{}, B is {}x{}",
+            self.nrows, self.ncols, b.nrows, b.ncols
+        );
+
+        let a_ref = self.as_ref();
+        let b_ref = b.as_ref();
+
+        let m = self.nrows;
+        let n = b.ncols;
+        let k = self.ncols;
+
+        let mut result = crate::core::GemmWithArgmax::<S>::new(m, n);
+
+        unsafe {
+            crate::core::tropical_gemm_with_argmax_portable::<S>(
+                m,
+                n,
+                k,
+                a_ref.as_slice().as_ptr(),
+                self.ncols,
+                Transpose::NoTrans,
+                b_ref.as_slice().as_ptr(),
+                b.ncols,
+                Transpose::NoTrans,
+                &mut result,
+            );
+        }
+
+        MatWithArgmax {
+            values: Mat::from_vec(result.values, m, n),
+            argmax: result.argmax,
+        }
     }
 }
