@@ -5,14 +5,17 @@ Fast tropical matrix multiplication with automatic differentiation support.
 ## Installation
 
 ```bash
-# From source (requires Rust toolchain)
-cd crates/tropical-gemm-python
-pip install maturin
-maturin develop
+# From PyPI
+pip install tropical-gemm
 
-# Or build a wheel
-maturin build --release
-pip install target/wheels/tropical_gemm-*.whl
+# With PyTorch support (for automatic differentiation)
+pip install tropical-gemm[torch]
+
+# For GPU support (requires CUDA toolkit)
+pip install maturin
+git clone https://github.com/TensorBFS/tropical-gemm
+cd tropical-gemm/crates/tropical-gemm-python
+maturin develop --features cuda
 ```
 
 ## Quick Start
@@ -36,57 +39,103 @@ print("MaxPlus result:", c)
 c = tropical_gemm.minplus_matmul(a, b)
 print("MinPlus result:", c)
 
+# MaxMul tropical matmul: C[i,j] = max_k(A[i,k] * B[k,j])
+c = tropical_gemm.maxmul_matmul(a, b)
+print("MaxMul result:", c)
+
 # With argmax for backpropagation
 c, argmax = tropical_gemm.maxplus_matmul_with_argmax(a, b)
 print("Result:", c)
 print("Argmax:", argmax)
+
+# GPU acceleration (if compiled with CUDA)
+if tropical_gemm.cuda_available():
+    c = tropical_gemm.maxplus_matmul_gpu(a, b)
+    c = tropical_gemm.minplus_matmul_gpu(a, b)
+    c = tropical_gemm.maxmul_matmul_gpu(a, b)
 ```
 
 ## PyTorch Integration
 
-See `examples/pytorch_tropical.py` for a complete example of using tropical GEMM with PyTorch autograd.
+The package includes a `pytorch` submodule with pre-built autograd functions:
 
 ```python
 import torch
-import tropical_gemm
+from tropical_gemm.pytorch import (
+    # CPU operations
+    tropical_maxplus_matmul,
+    tropical_minplus_matmul,
+    tropical_maxmul_matmul,
+    # GPU operations (requires CUDA)
+    tropical_maxplus_matmul_gpu,
+    tropical_minplus_matmul_gpu,
+    tropical_maxmul_matmul_gpu,
+    GPU_AVAILABLE,
+)
 
-class TropicalMaxPlusMatmul(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, a, b):
-        a_np = a.detach().numpy()
-        b_np = b.detach().numpy()
-        c_np, argmax_np = tropical_gemm.maxplus_matmul_with_argmax(a_np, b_np)
-        ctx.save_for_backward(torch.from_numpy(argmax_np))
-        ctx.k = a.shape[1]
-        return torch.from_numpy(c_np)
+# Create tensors with gradient tracking
+a = torch.randn(100, 50, requires_grad=True)
+b = torch.randn(50, 80, requires_grad=True)
 
-    @staticmethod
-    def backward(ctx, grad_c):
-        argmax, = ctx.saved_tensors
-        k = ctx.k
-        grad_c_np = grad_c.numpy()
-        argmax_np = argmax.numpy()
-        grad_a = torch.from_numpy(tropical_gemm.backward_a(grad_c_np, argmax_np, k))
-        grad_b = torch.from_numpy(tropical_gemm.backward_b(grad_c_np, argmax_np, k))
-        return grad_a, grad_b
+# Forward pass
+c = tropical_maxplus_matmul(a, b)
 
-# Use like a regular PyTorch operation
-a = torch.randn(3, 4, requires_grad=True)
-b = torch.randn(4, 5, requires_grad=True)
-c = TropicalMaxPlusMatmul.apply(a, b)
-c.sum().backward()
+# Backward pass - gradients computed automatically
+loss = c.sum()
+loss.backward()
+
+print(f"grad_a shape: {a.grad.shape}")  # (100, 50)
+print(f"grad_b shape: {b.grad.shape}")  # (50, 80)
+
+# Use GPU for larger matrices
+if GPU_AVAILABLE:
+    c = tropical_maxplus_matmul_gpu(a, b)
 ```
+
+### Gradient Semantics
+
+The gradient computation depends on the semiring type:
+
+**MaxPlus/MinPlus (additive rule):**
+- `grad_A[i,k] = grad_C[i,j]` if `k == argmax[i,j]`
+- `grad_B[k,j] = grad_C[i,j]` if `k == argmax[i,j]`
+
+**MaxMul (multiplicative rule):**
+- `grad_A[i,k] = grad_C[i,j] * B[k,j]` if `k == argmax[i,j]`
+- `grad_B[k,j] = grad_C[i,j] * A[i,k]` if `k == argmax[i,j]`
 
 ## API Reference
 
-### Functions
+### Core Functions
 
-- `maxplus_matmul(a, b)` - MaxPlus tropical matmul: C[i,j] = max_k(A[i,k] + B[k,j])
-- `minplus_matmul(a, b)` - MinPlus tropical matmul: C[i,j] = min_k(A[i,k] + B[k,j])
-- `maxplus_matmul_with_argmax(a, b)` - MaxPlus with argmax indices for backprop
-- `minplus_matmul_with_argmax(a, b)` - MinPlus with argmax indices for backprop
-- `backward_a(grad_c, argmax, k)` - Compute gradient w.r.t. A
-- `backward_b(grad_c, argmax, k)` - Compute gradient w.r.t. B
+| Function | Description |
+|----------|-------------|
+| `maxplus_matmul(a, b)` | MaxPlus: C[i,j] = max_k(A[i,k] + B[k,j]) |
+| `minplus_matmul(a, b)` | MinPlus: C[i,j] = min_k(A[i,k] + B[k,j]) |
+| `maxmul_matmul(a, b)` | MaxMul: C[i,j] = max_k(A[i,k] * B[k,j]) |
+| `*_with_argmax(a, b)` | Returns (result, argmax) for backpropagation |
+| `backward_a(grad_c, argmax, k)` | Gradient w.r.t. A (additive rule) |
+| `backward_b(grad_c, argmax, k)` | Gradient w.r.t. B (additive rule) |
+| `maxmul_backward_a(grad_c, argmax, b)` | Gradient w.r.t. A (multiplicative rule) |
+| `maxmul_backward_b(grad_c, argmax, a)` | Gradient w.r.t. B (multiplicative rule) |
+
+### GPU Functions (requires CUDA)
+
+| Function | Description |
+|----------|-------------|
+| `cuda_available()` | Check if CUDA support is available |
+| `maxplus_matmul_gpu(a, b)` | GPU MaxPlus matmul |
+| `minplus_matmul_gpu(a, b)` | GPU MinPlus matmul |
+| `maxmul_matmul_gpu(a, b)` | GPU MaxMul matmul |
+| `*_gpu_with_argmax(a, b)` | GPU matmul with argmax tracking |
+
+### Data Types
+
+All functions support:
+- `f32` (default): `maxplus_matmul`, etc.
+- `f64`: `maxplus_matmul_f64`, etc.
+- `i32`: `maxplus_matmul_i32`, etc.
+- `i64`: `maxplus_matmul_i64`, etc.
 
 ## License
 

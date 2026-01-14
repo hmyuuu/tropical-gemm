@@ -1058,6 +1058,67 @@ mod gpu {
         Ok((c_data.into_pyarray(py), argmax_i32.into_pyarray(py)))
     }
 
+    /// GPU-accelerated MaxMul matrix multiplication: C[i,j] = max_k(A[i,k] * B[k,j])
+    #[pyfunction]
+    pub fn maxmul_matmul_gpu<'py>(
+        py: Python<'py>,
+        a: PyReadonlyArray2<'py, f32>,
+        b: PyReadonlyArray2<'py, f32>,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+        let m = a_shape[0];
+        let k = a_shape[1];
+        let n = b_shape[1];
+
+        if k != b_shape[0] {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Dimension mismatch: A is {}x{}, B is {}x{}",
+                m, k, b_shape[0], n
+            )));
+        }
+
+        let a_data = a.as_slice()?;
+        let b_data = b.as_slice()?;
+
+        let c_data = tropical_matmul_gpu::<TropicalMaxMul<f32>>(a_data, m, k, b_data, n)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("CUDA error: {}", e)))?;
+
+        Ok(c_data.into_pyarray(py))
+    }
+
+    /// GPU-accelerated MaxMul with argmax tracking for backpropagation.
+    #[pyfunction]
+    pub fn maxmul_matmul_gpu_with_argmax<'py>(
+        py: Python<'py>,
+        a: PyReadonlyArray2<'py, f32>,
+        b: PyReadonlyArray2<'py, f32>,
+    ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<i32>>)> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+        let m = a_shape[0];
+        let k = a_shape[1];
+        let n = b_shape[1];
+
+        if k != b_shape[0] {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Dimension mismatch: A is {}x{}, B is {}x{}",
+                m, k, b_shape[0], n
+            )));
+        }
+
+        let a_data = a.as_slice()?;
+        let b_data = b.as_slice()?;
+
+        let (c_data, argmax) =
+            tropical_matmul_gpu_with_argmax::<TropicalMaxMul<f32>>(a_data, m, k, b_data, n)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("CUDA error: {}", e)))?;
+
+        let argmax_i32: Vec<i32> = argmax.into_iter().map(|x| x as i32).collect();
+
+        Ok((c_data.into_pyarray(py), argmax_i32.into_pyarray(py)))
+    }
+
     /// Check if CUDA is available.
     #[pyfunction]
     pub fn cuda_available() -> bool {
@@ -1068,8 +1129,10 @@ mod gpu {
     pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(maxplus_matmul_gpu, m)?)?;
         m.add_function(wrap_pyfunction!(minplus_matmul_gpu, m)?)?;
+        m.add_function(wrap_pyfunction!(maxmul_matmul_gpu, m)?)?;
         m.add_function(wrap_pyfunction!(maxplus_matmul_gpu_with_argmax, m)?)?;
         m.add_function(wrap_pyfunction!(minplus_matmul_gpu_with_argmax, m)?)?;
+        m.add_function(wrap_pyfunction!(maxmul_matmul_gpu_with_argmax, m)?)?;
         m.add_function(wrap_pyfunction!(cuda_available, m)?)?;
         Ok(())
     }

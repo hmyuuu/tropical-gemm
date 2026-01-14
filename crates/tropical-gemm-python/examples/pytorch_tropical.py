@@ -33,6 +33,7 @@ from tropical_gemm.pytorch import (
     tropical_maxmul_matmul,
     tropical_maxplus_matmul_gpu,
     tropical_minplus_matmul_gpu,
+    tropical_maxmul_matmul_gpu,
     GPU_AVAILABLE,
 )
 

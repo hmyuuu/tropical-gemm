@@ -386,6 +386,83 @@ class TropicalMinPlusMatmulGPU(torch.autograd.Function):
         return grad_a, grad_b
 
 
+class TropicalMaxMulMatmulGPU(torch.autograd.Function):
+    """
+    GPU-accelerated MaxMul tropical matrix multiplication.
+
+    Forward: C[i,j] = max_k(A[i,k] * B[k,j])
+
+    Uses CUDA kernels for the forward pass. The backward pass uses CPU
+    with the multiplicative gradient rule.
+    """
+
+    @staticmethod
+    def forward(ctx, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        if not GPU_AVAILABLE:
+            raise RuntimeError(
+                "CUDA GPU support not available. Rebuild with --features cuda"
+            )
+
+        m, k = a.shape
+        n = b.shape[1]
+
+        a_np = a.detach().cpu().numpy().astype(np.float32)
+        b_np = b.detach().cpu().numpy().astype(np.float32)
+
+        if not a_np.flags["C_CONTIGUOUS"]:
+            a_np = np.ascontiguousarray(a_np)
+        if not b_np.flags["C_CONTIGUOUS"]:
+            b_np = np.ascontiguousarray(b_np)
+
+        # Use GPU implementation
+        c_flat, argmax_flat = tropical_gemm.maxmul_matmul_gpu_with_argmax(a_np, b_np)
+
+        c_np = np.array(c_flat).reshape(m, n)
+        argmax_np = np.array(argmax_flat).reshape(m, n)
+
+        # Save inputs and argmax for backward (needed for multiplicative gradient)
+        ctx.save_for_backward(
+            torch.from_numpy(a_np),
+            torch.from_numpy(b_np),
+            torch.from_numpy(argmax_np),
+        )
+        ctx.k = k
+        ctx.m = m
+        ctx.n = n
+
+        return torch.from_numpy(c_np).to(a.device)
+
+    @staticmethod
+    def backward(ctx, grad_c: torch.Tensor):
+        a, b, argmax = ctx.saved_tensors
+        k_dim = ctx.k
+        m = ctx.m
+        n = ctx.n
+
+        grad_c_np = grad_c.cpu().numpy().astype(np.float32)
+        argmax_np = argmax.numpy().astype(np.int32)
+        a_np = a.numpy().astype(np.float32)
+        b_np = b.numpy().astype(np.float32)
+
+        if not grad_c_np.flags["C_CONTIGUOUS"]:
+            grad_c_np = np.ascontiguousarray(grad_c_np)
+        if not argmax_np.flags["C_CONTIGUOUS"]:
+            argmax_np = np.ascontiguousarray(argmax_np)
+
+        # Use multiplicative backward rule
+        grad_a_flat = tropical_gemm.maxmul_backward_a(grad_c_np, argmax_np, b_np)
+        grad_b_flat = tropical_gemm.maxmul_backward_b(grad_c_np, argmax_np, a_np)
+
+        grad_a = torch.from_numpy(np.array(grad_a_flat).reshape(m, k_dim)).to(
+            grad_c.device
+        )
+        grad_b = torch.from_numpy(np.array(grad_b_flat).reshape(k_dim, n)).to(
+            grad_c.device
+        )
+
+        return grad_a, grad_b
+
+
 # ===========================================================================
 # Convenience functions
 # ===========================================================================
@@ -467,6 +544,23 @@ def tropical_minplus_matmul_gpu(a: torch.Tensor, b: torch.Tensor) -> torch.Tenso
     return TropicalMinPlusMatmulGPU.apply(a, b)
 
 
+def tropical_maxmul_matmul_gpu(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """
+    GPU-accelerated MaxMul tropical matrix multiplication.
+
+    Args:
+        a: Input tensor of shape (M, K)
+        b: Input tensor of shape (K, N)
+
+    Returns:
+        Output tensor of shape (M, N)
+
+    Raises:
+        RuntimeError: If CUDA support is not available
+    """
+    return TropicalMaxMulMatmulGPU.apply(a, b)
+
+
 __all__ = [
     # CPU autograd functions
     "TropicalMaxPlusMatmul",
@@ -475,12 +569,14 @@ __all__ = [
     # GPU autograd functions
     "TropicalMaxPlusMatmulGPU",
     "TropicalMinPlusMatmulGPU",
+    "TropicalMaxMulMatmulGPU",
     # Convenience functions
     "tropical_maxplus_matmul",
     "tropical_minplus_matmul",
     "tropical_maxmul_matmul",
     "tropical_maxplus_matmul_gpu",
     "tropical_minplus_matmul_gpu",
+    "tropical_maxmul_matmul_gpu",
     # GPU availability flag
     "GPU_AVAILABLE",
 ]

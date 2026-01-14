@@ -67,8 +67,10 @@ if cuda_available():
     from tropical_gemm._core import (
         maxplus_matmul_gpu,
         minplus_matmul_gpu,
+        maxmul_matmul_gpu,
         maxplus_matmul_gpu_with_argmax,
         minplus_matmul_gpu_with_argmax,
+        maxmul_matmul_gpu_with_argmax,
     )
 
 __version__ = "0.1.0"
@@ -114,6 +116,8 @@ if cuda_available():
     __all__.extend([
         "maxplus_matmul_gpu",
         "minplus_matmul_gpu",
+        "maxmul_matmul_gpu",
         "maxplus_matmul_gpu_with_argmax",
         "minplus_matmul_gpu_with_argmax",
+        "maxmul_matmul_gpu_with_argmax",
     ])

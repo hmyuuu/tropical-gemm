@@ -14,6 +14,28 @@ tropical-gemm-cuda = "0.1"
 
 ## Python Package
 
+### From PyPI (Recommended)
+
+```bash
+# Basic installation
+pip install tropical-gemm
+
+# With PyTorch support for automatic differentiation
+pip install tropical-gemm[torch]
+
+# For development
+pip install tropical-gemm[dev]
+```
+
+### Optional Dependencies
+
+The Python package has optional extras:
+
+| Extra | Command | Description |
+|-------|---------|-------------|
+| `torch` | `pip install tropical-gemm[torch]` | PyTorch integration with autograd support |
+| `dev` | `pip install tropical-gemm[dev]` | Development dependencies (pytest, torch) |
+
 ### From Source
 
 ```bash
@@ -30,8 +52,8 @@ source .venv/bin/activate  # Linux/Mac
 pip install maturin
 maturin develop --release
 
-# Optional: with PyTorch support
-pip install torch
+# With CUDA support
+maturin develop --release --features cuda
 ```
 
 ### Verify Installation
@@ -45,6 +67,27 @@ b = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
 
 c = tropical_gemm.maxplus_matmul(a, b)
 print(c)  # [[5. 6.] [7. 8.]]
+
+# Check GPU availability
+print(f"CUDA available: {tropical_gemm.cuda_available()}")
+```
+
+### Verify PyTorch Integration
+
+```python
+import torch
+from tropical_gemm.pytorch import tropical_maxplus_matmul, GPU_AVAILABLE
+
+print(f"GPU available: {GPU_AVAILABLE}")
+
+a = torch.randn(3, 4, requires_grad=True)
+b = torch.randn(4, 5, requires_grad=True)
+
+c = tropical_maxplus_matmul(a, b)
+c.sum().backward()
+
+print(f"grad_a: {a.grad.shape}")  # (3, 4)
+print(f"grad_b: {b.grad.shape}")  # (4, 5)
 ```
 
 ## CUDA Setup
@@ -65,6 +108,18 @@ sudo apt install nvidia-cuda-toolkit
 
 The CUDA kernels are compiled at runtime using NVRTC, so you don't need to
 compile the library with a specific CUDA version.
+
+### Building Python Package with CUDA
+
+```bash
+cd crates/tropical-gemm-python
+
+# Build with CUDA feature
+maturin develop --features cuda
+
+# Or for release
+maturin build --release --features cuda
+```
 
 ## Building from Source
 
