@@ -869,6 +869,7 @@ dependencies = [
  "numpy",
  "pyo3",
  "tropical-gemm",
+ "tropical-gemm-cuda",
 ]
 
 [[package]]

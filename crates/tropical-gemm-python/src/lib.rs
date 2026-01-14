@@ -2,6 +2,10 @@
 //!
 //! This module provides Python/NumPy bindings for tropical GEMM operations,
 //! enabling integration with PyTorch custom autograd functions.
+//!
+//! ## Features
+//!
+//! - `cuda`: Enable GPU acceleration via CUDA
 
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::prelude::*;
@@ -11,6 +15,7 @@ use ::tropical_gemm::{
     tropical_matmul, tropical_matmul_with_argmax, GemmWithArgmax, TropicalMaxMul, TropicalMaxPlus,
     TropicalMinPlus, TropicalSemiring,
 };
+
 
 /// Tropical MaxPlus matrix multiplication: C[i,j] = max_k(A[i,k] + B[k,j])
 ///
@@ -903,9 +908,193 @@ fn maxmul_matmul_i64<'py>(
     Ok(c_scalars.into_pyarray(py))
 }
 
-/// Tropical GEMM Python module.
+// ============================================================================
+// CUDA GPU operations (optional, requires "cuda" feature)
+// ============================================================================
+
+#[cfg(feature = "cuda")]
+mod gpu {
+    use super::*;
+    use tropical_gemm_cuda::{tropical_matmul_gpu, tropical_matmul_gpu_with_argmax};
+
+    /// GPU-accelerated MaxPlus matrix multiplication: C[i,j] = max_k(A[i,k] + B[k,j])
+    ///
+    /// Note: This creates a new CUDA context for each call. For repeated operations,
+    /// consider batching your computations.
+    ///
+    /// Args:
+    ///     a: Input matrix A of shape (M, K)
+    ///     b: Input matrix B of shape (K, N)
+    ///
+    /// Returns:
+    ///     Result matrix C of shape (M, N) as a flattened array
+    #[pyfunction]
+    pub fn maxplus_matmul_gpu<'py>(
+        py: Python<'py>,
+        a: PyReadonlyArray2<'py, f32>,
+        b: PyReadonlyArray2<'py, f32>,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+        let m = a_shape[0];
+        let k = a_shape[1];
+        let n = b_shape[1];
+
+        if k != b_shape[0] {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Dimension mismatch: A is {}x{}, B is {}x{}",
+                m, k, b_shape[0], n
+            )));
+        }
+
+        let a_data = a.as_slice()?;
+        let b_data = b.as_slice()?;
+
+        let c_data = tropical_matmul_gpu::<TropicalMaxPlus<f32>>(a_data, m, k, b_data, n)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("CUDA error: {}", e)))?;
+
+        Ok(c_data.into_pyarray(py))
+    }
+
+    /// GPU-accelerated MinPlus matrix multiplication: C[i,j] = min_k(A[i,k] + B[k,j])
+    #[pyfunction]
+    pub fn minplus_matmul_gpu<'py>(
+        py: Python<'py>,
+        a: PyReadonlyArray2<'py, f32>,
+        b: PyReadonlyArray2<'py, f32>,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+        let m = a_shape[0];
+        let k = a_shape[1];
+        let n = b_shape[1];
+
+        if k != b_shape[0] {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Dimension mismatch: A is {}x{}, B is {}x{}",
+                m, k, b_shape[0], n
+            )));
+        }
+
+        let a_data = a.as_slice()?;
+        let b_data = b.as_slice()?;
+
+        let c_data = tropical_matmul_gpu::<TropicalMinPlus<f32>>(a_data, m, k, b_data, n)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("CUDA error: {}", e)))?;
+
+        Ok(c_data.into_pyarray(py))
+    }
+
+    /// GPU-accelerated MaxPlus with argmax tracking for backpropagation.
+    ///
+    /// Args:
+    ///     a: Input matrix A of shape (M, K)
+    ///     b: Input matrix B of shape (K, N)
+    ///
+    /// Returns:
+    ///     Tuple of (C, argmax) where:
+    ///     - C: Result matrix of shape (M, N) as flattened array
+    ///     - argmax: Indices of shape (M, N) as flattened array
+    #[pyfunction]
+    pub fn maxplus_matmul_gpu_with_argmax<'py>(
+        py: Python<'py>,
+        a: PyReadonlyArray2<'py, f32>,
+        b: PyReadonlyArray2<'py, f32>,
+    ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<i32>>)> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+        let m = a_shape[0];
+        let k = a_shape[1];
+        let n = b_shape[1];
+
+        if k != b_shape[0] {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Dimension mismatch: A is {}x{}, B is {}x{}",
+                m, k, b_shape[0], n
+            )));
+        }
+
+        let a_data = a.as_slice()?;
+        let b_data = b.as_slice()?;
+
+        let (c_data, argmax) =
+            tropical_matmul_gpu_with_argmax::<TropicalMaxPlus<f32>>(a_data, m, k, b_data, n)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("CUDA error: {}", e)))?;
+
+        let argmax_i32: Vec<i32> = argmax.into_iter().map(|x| x as i32).collect();
+
+        Ok((c_data.into_pyarray(py), argmax_i32.into_pyarray(py)))
+    }
+
+    /// GPU-accelerated MinPlus with argmax tracking for backpropagation.
+    #[pyfunction]
+    pub fn minplus_matmul_gpu_with_argmax<'py>(
+        py: Python<'py>,
+        a: PyReadonlyArray2<'py, f32>,
+        b: PyReadonlyArray2<'py, f32>,
+    ) -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<i32>>)> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+        let m = a_shape[0];
+        let k = a_shape[1];
+        let n = b_shape[1];
+
+        if k != b_shape[0] {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Dimension mismatch: A is {}x{}, B is {}x{}",
+                m, k, b_shape[0], n
+            )));
+        }
+
+        let a_data = a.as_slice()?;
+        let b_data = b.as_slice()?;
+
+        let (c_data, argmax) =
+            tropical_matmul_gpu_with_argmax::<TropicalMinPlus<f32>>(a_data, m, k, b_data, n)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("CUDA error: {}", e)))?;
+
+        let argmax_i32: Vec<i32> = argmax.into_iter().map(|x| x as i32).collect();
+
+        Ok((c_data.into_pyarray(py), argmax_i32.into_pyarray(py)))
+    }
+
+    /// Check if CUDA is available.
+    #[pyfunction]
+    pub fn cuda_available() -> bool {
+        true
+    }
+
+    /// Register GPU functions in the module.
+    pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add_function(wrap_pyfunction!(maxplus_matmul_gpu, m)?)?;
+        m.add_function(wrap_pyfunction!(minplus_matmul_gpu, m)?)?;
+        m.add_function(wrap_pyfunction!(maxplus_matmul_gpu_with_argmax, m)?)?;
+        m.add_function(wrap_pyfunction!(minplus_matmul_gpu_with_argmax, m)?)?;
+        m.add_function(wrap_pyfunction!(cuda_available, m)?)?;
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "cuda"))]
+mod gpu {
+    use super::*;
+
+    /// Check if CUDA is available (stub when not compiled with CUDA).
+    #[pyfunction]
+    pub fn cuda_available() -> bool {
+        false
+    }
+
+    /// Register GPU functions in the module (stub).
+    pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add_function(wrap_pyfunction!(cuda_available, m)?)?;
+        Ok(())
+    }
+}
+
+/// Tropical GEMM Python module (native Rust extension).
 #[pymodule]
-fn tropical_gemm(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // f32 operations
     m.add_function(wrap_pyfunction!(maxplus_matmul, m)?)?;
     m.add_function(wrap_pyfunction!(minplus_matmul, m)?)?;
@@ -939,6 +1128,9 @@ fn tropical_gemm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(maxplus_matmul_i64, m)?)?;
     m.add_function(wrap_pyfunction!(minplus_matmul_i64, m)?)?;
     m.add_function(wrap_pyfunction!(maxmul_matmul_i64, m)?)?;
+
+    // GPU operations (if available)
+    gpu::register(m)?;
 
     Ok(())
 }

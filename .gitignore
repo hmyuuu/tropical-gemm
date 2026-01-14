@@ -20,6 +20,7 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.pyo
+*.so
 .pytest_cache/
 *.whl
 *.egg-info/

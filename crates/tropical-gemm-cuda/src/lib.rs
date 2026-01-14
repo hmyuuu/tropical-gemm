@@ -1660,4 +1660,309 @@ mod tests {
             assert_eq!(grad_b.len(), k * n);
         }
     }
+
+    // ========================================================================
+    // Additional coverage tests
+    // ========================================================================
+
+    #[test]
+    fn test_context_helper_functions() {
+        // Test grid_dims_f32
+        let (gx, gy, gz) = CudaContext::grid_dims_f32(128, 256);
+        assert!(gx > 0);
+        assert_eq!(gy, 1);
+        assert_eq!(gz, 1);
+
+        // Test grid_dims_f64
+        let (gx, gy, gz) = CudaContext::grid_dims_f64(128, 256);
+        assert!(gx > 0);
+        assert_eq!(gy, 1);
+        assert_eq!(gz, 1);
+
+        // Test block_dims_f32
+        let (bx, by, bz) = CudaContext::block_dims_f32();
+        assert!(bx > 0);
+        assert!(by > 0);
+        assert_eq!(bz, 1);
+
+        // Test block_dims_f64
+        let (bx, by, bz) = CudaContext::block_dims_f64();
+        assert!(bx > 0);
+        assert!(by > 0);
+        assert_eq!(bz, 1);
+    }
+
+    #[test]
+    fn test_context_device_name() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            let name = ctx.device_name();
+            assert!(name.starts_with("CUDA Device"));
+        }
+    }
+
+    #[test]
+    fn test_context_get_kernel() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            // Test getting a valid kernel
+            let kernel = ctx.get_kernel("tropical_maxplus_f32_nn");
+            assert!(kernel.is_ok());
+
+            // Test getting an invalid kernel
+            let kernel = ctx.get_kernel("nonexistent_kernel");
+            assert!(kernel.is_err());
+        }
+    }
+
+    #[test]
+    fn test_tropical_matmul_gpu_dimension_mismatch_a() {
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        // Wrong size for A
+        let a = vec![1.0f32; 5]; // Should be m*k = 6
+        let b = vec![1.0f32; 6];
+
+        let result = tropical_matmul_gpu::<TropicalMaxPlus<f32>>(&a, 2, 3, &b, 2);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, CudaError::DimensionMismatch(_)));
+    }
+
+    #[test]
+    fn test_tropical_matmul_gpu_dimension_mismatch_b() {
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        // Wrong size for B
+        let a = vec![1.0f32; 6];
+        let b = vec![1.0f32; 5]; // Should be k*n = 6
+
+        let result = tropical_matmul_gpu::<TropicalMaxPlus<f32>>(&a, 2, 3, &b, 2);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, CudaError::DimensionMismatch(_)));
+    }
+
+    #[test]
+    fn test_tropical_matmul_gpu_with_argmax_dimension_mismatch() {
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        let a = vec![1.0f32; 5]; // Wrong size
+        let b = vec![1.0f32; 6];
+
+        let result = tropical_matmul_gpu_with_argmax::<TropicalMaxPlus<f32>>(&a, 2, 3, &b, 2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tropical_gemm_gpu_dimension_mismatch() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            // Create matrices with incompatible dimensions
+            let a = GpuMatrix::from_host_row_major(&ctx, &vec![1.0f32; 6], 2, 3).unwrap();
+            let b = GpuMatrix::from_host_row_major(&ctx, &vec![1.0f32; 6], 2, 3).unwrap(); // 2x3, not 3x2
+            let mut c = GpuMatrix::alloc(&ctx, 2, 3).unwrap();
+
+            let result = tropical_gemm_gpu::<TropicalMaxPlus<f32>>(&ctx, &a, &b, &mut c);
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_tropical_matmul_gpu_with_ctx_dimension_mismatch() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            let a = GpuMatrix::from_host_row_major(&ctx, &vec![1.0f32; 6], 2, 3).unwrap();
+            let b = GpuMatrix::from_host_row_major(&ctx, &vec![1.0f32; 6], 2, 3).unwrap(); // Wrong dimensions
+
+            let result = tropical_matmul_gpu_with_ctx::<TropicalMaxPlus<f32>>(&ctx, &a, &b);
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_gpu_memory_dimension_mismatch() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            // Try to create matrix with wrong data size
+            let result = GpuMatrix::<f32>::from_host_row_major(&ctx, &vec![1.0f32; 5], 2, 3);
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_gpu_memory_col_major_dimension_mismatch() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            let result = GpuMatrix::<f32>::from_host_col_major(&ctx, &vec![1.0f32; 5], 2, 3);
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_gpu_matrix_accessors() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            let mat = GpuMatrix::from_host_row_major(&ctx, &vec![1.0f32; 6], 2, 3).unwrap();
+            assert_eq!(mat.rows(), 2);
+            assert_eq!(mat.cols(), 3);
+            assert_eq!(mat.ld(), 2); // Column-major leading dimension = rows
+        }
+    }
+
+    #[test]
+    fn test_gpu_matrix_with_argmax_accessors() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            let mat = GpuMatrixWithArgmax::<f32>::alloc(&ctx, 2, 3).unwrap();
+            assert_eq!(mat.rows(), 2);
+            assert_eq!(mat.cols(), 3);
+        }
+    }
+
+    #[test]
+    fn test_gpu_matrix_col_major_roundtrip() {
+        if let Some(ctx) = cuda_context_or_skip() {
+            let data: Vec<f32> = (0..6).map(|i| i as f32).collect();
+            let mat = GpuMatrix::from_host_col_major(&ctx, &data, 2, 3).unwrap();
+            let back = mat.to_host_col_major(&ctx).unwrap();
+            assert_eq!(data, back);
+        }
+    }
+
+    #[test]
+    fn test_tropical_matmul_gpu_maxmul() {
+        use tropical_gemm::types::TropicalMaxMul;
+
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        // 2x2 matrices with positive values (MaxMul uses multiplication)
+        let a = vec![1.0f32, 2.0, 3.0, 4.0];
+        let b = vec![1.0f32, 2.0, 3.0, 4.0];
+
+        let c = tropical_matmul_gpu::<TropicalMaxMul<f32>>(&a, 2, 2, &b, 2).unwrap();
+
+        // C[0,0] = max(1*1, 2*3) = max(1, 6) = 6
+        // C[0,1] = max(1*2, 2*4) = max(2, 8) = 8
+        // C[1,0] = max(3*1, 4*3) = max(3, 12) = 12
+        // C[1,1] = max(3*2, 4*4) = max(6, 16) = 16
+        assert!((c[0] - 6.0).abs() < 1e-5);
+        assert!((c[1] - 8.0).abs() < 1e-5);
+        assert!((c[2] - 12.0).abs() < 1e-5);
+        assert!((c[3] - 16.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_tropical_matmul_gpu_maxmul_with_argmax() {
+        use tropical_gemm::types::TropicalMaxMul;
+
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        let a = vec![1.0f32, 2.0, 3.0, 4.0];
+        let b = vec![1.0f32, 2.0, 3.0, 4.0];
+
+        let (c, argmax) =
+            tropical_matmul_gpu_with_argmax::<TropicalMaxMul<f32>>(&a, 2, 2, &b, 2).unwrap();
+
+        // C[0,0] = max(1*1, 2*3) = 6, argmax=1
+        assert!((c[0] - 6.0).abs() < 1e-5);
+        assert_eq!(argmax[0], 1);
+    }
+
+    #[test]
+    fn test_tropical_matmul_gpu_i32() {
+        use tropical_gemm::types::TropicalMaxPlus;
+
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        let a = vec![1i32, 2, 3, 4, 5, 6];
+        let b = vec![1i32, 2, 3, 4, 5, 6];
+
+        let c = tropical_matmul_gpu::<TropicalMaxPlus<i32>>(&a, 2, 3, &b, 2).unwrap();
+
+        // C[0,0] = max(1+1, 2+3, 3+5) = 8
+        assert_eq!(c[0], 8);
+        // C[1,1] = max(4+2, 5+4, 6+6) = 12
+        assert_eq!(c[3], 12);
+    }
+
+    #[test]
+    fn test_tropical_matmul_gpu_i64() {
+        use tropical_gemm::types::TropicalMaxPlus;
+
+        if cuda_context_or_skip().is_none() {
+            return;
+        }
+
+        let a = vec![1i64, 2, 3, 4, 5, 6];
+        let b = vec![1i64, 2, 3, 4, 5, 6];
+
+        let c = tropical_matmul_gpu::<TropicalMaxPlus<i64>>(&a, 2, 3, &b, 2).unwrap();
+
+        assert_eq!(c[0], 8);
+        assert_eq!(c[3], 12);
+    }
+
+    #[test]
+    fn test_error_display() {
+        // Test error message formatting
+        let err = CudaError::NoDevice;
+        let msg = format!("{}", err);
+        assert!(msg.contains("No CUDA device"));
+
+        let err = CudaError::DimensionMismatch("test".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("Dimension mismatch"));
+        assert!(msg.contains("test"));
+
+        let err = CudaError::KernelNotFound("my_kernel".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("Kernel not found"));
+        assert!(msg.contains("my_kernel"));
+    }
+
+    #[test]
+    fn test_backward_empty_matrices() {
+        // Test backward with empty inputs
+        let grad_c: Vec<f32> = vec![];
+        let argmax: Vec<ArgmaxIndex> = vec![];
+
+        let grad_a = tropical_backward_a_gpu(&grad_c, &argmax, 0, 0, 0);
+        assert!(grad_a.is_empty());
+
+        let grad_b = tropical_backward_b_gpu(&grad_c, &argmax, 0, 0, 0);
+        assert!(grad_b.is_empty());
+    }
+
+    #[test]
+    fn test_backward_f64() {
+        let m = 2;
+        let k = 3;
+        let n = 2;
+
+        let grad_c = vec![1.0f64; m * n];
+        let argmax: Vec<ArgmaxIndex> = vec![0, 2, 1, 2];
+
+        let grad_a = tropical_backward_a_gpu::<f64>(&grad_c, &argmax, m, k, n);
+        let grad_b = tropical_backward_b_gpu::<f64>(&grad_c, &argmax, m, k, n);
+
+        assert_eq!(grad_a.len(), m * k);
+        assert_eq!(grad_b.len(), k * n);
+    }
+
+    #[test]
+    fn test_backward_batched_empty() {
+        let grad_c_batch: Vec<Vec<f32>> = vec![];
+        let argmax_batch: Vec<Vec<ArgmaxIndex>> = vec![];
+
+        let grad_a = tropical_backward_a_gpu_batched(&grad_c_batch, &argmax_batch, 2, 3, 2);
+        let grad_b = tropical_backward_b_gpu_batched(&grad_c_batch, &argmax_batch, 2, 3, 2);
+
+        assert!(grad_a.is_empty());
+        assert!(grad_b.is_empty());
+    }
 }

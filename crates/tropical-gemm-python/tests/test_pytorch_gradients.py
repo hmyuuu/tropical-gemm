@@ -13,191 +13,17 @@ import pytest
 torch = pytest.importorskip("torch")
 
 import tropical_gemm
-
-
-class TropicalMaxPlusMatmul(torch.autograd.Function):
-    """MaxPlus tropical matmul with custom backward."""
-
-    @staticmethod
-    def forward(ctx, a, b):
-        m, k = a.shape
-        n = b.shape[1]
-
-        a_np = a.detach().cpu().numpy().astype(np.float32)
-        b_np = b.detach().cpu().numpy().astype(np.float32)
-
-        if not a_np.flags["C_CONTIGUOUS"]:
-            a_np = np.ascontiguousarray(a_np)
-        if not b_np.flags["C_CONTIGUOUS"]:
-            b_np = np.ascontiguousarray(b_np)
-
-        c_flat, argmax_flat = tropical_gemm.maxplus_matmul_with_argmax(a_np, b_np)
-
-        c_np = np.array(c_flat).reshape(m, n)
-        argmax_np = np.array(argmax_flat).reshape(m, n)
-
-        ctx.save_for_backward(torch.from_numpy(argmax_np))
-        ctx.k = k
-        ctx.m = m
-        ctx.n = n
-
-        return torch.from_numpy(c_np).to(a.device)
-
-    @staticmethod
-    def backward(ctx, grad_c):
-        (argmax,) = ctx.saved_tensors
-        k = ctx.k
-        m = ctx.m
-        n = ctx.n
-
-        grad_c_np = grad_c.cpu().numpy().astype(np.float32)
-        argmax_np = argmax.numpy().astype(np.int32)
-
-        if not grad_c_np.flags["C_CONTIGUOUS"]:
-            grad_c_np = np.ascontiguousarray(grad_c_np)
-        if not argmax_np.flags["C_CONTIGUOUS"]:
-            argmax_np = np.ascontiguousarray(argmax_np)
-
-        grad_a_flat = tropical_gemm.backward_a(grad_c_np, argmax_np, k)
-        grad_b_flat = tropical_gemm.backward_b(grad_c_np, argmax_np, k)
-
-        grad_a = torch.from_numpy(np.array(grad_a_flat).reshape(m, k)).to(grad_c.device)
-        grad_b = torch.from_numpy(np.array(grad_b_flat).reshape(k, n)).to(grad_c.device)
-
-        return grad_a, grad_b
-
-
-class TropicalMinPlusMatmul(torch.autograd.Function):
-    """MinPlus tropical matmul with custom backward."""
-
-    @staticmethod
-    def forward(ctx, a, b):
-        m, k = a.shape
-        n = b.shape[1]
-
-        a_np = a.detach().cpu().numpy().astype(np.float32)
-        b_np = b.detach().cpu().numpy().astype(np.float32)
-
-        if not a_np.flags["C_CONTIGUOUS"]:
-            a_np = np.ascontiguousarray(a_np)
-        if not b_np.flags["C_CONTIGUOUS"]:
-            b_np = np.ascontiguousarray(b_np)
-
-        c_flat, argmax_flat = tropical_gemm.minplus_matmul_with_argmax(a_np, b_np)
-
-        c_np = np.array(c_flat).reshape(m, n)
-        argmax_np = np.array(argmax_flat).reshape(m, n)
-
-        ctx.save_for_backward(torch.from_numpy(argmax_np))
-        ctx.k = k
-        ctx.m = m
-        ctx.n = n
-
-        return torch.from_numpy(c_np).to(a.device)
-
-    @staticmethod
-    def backward(ctx, grad_c):
-        (argmax,) = ctx.saved_tensors
-        k = ctx.k
-        m = ctx.m
-        n = ctx.n
-
-        grad_c_np = grad_c.cpu().numpy().astype(np.float32)
-        argmax_np = argmax.numpy().astype(np.int32)
-
-        if not grad_c_np.flags["C_CONTIGUOUS"]:
-            grad_c_np = np.ascontiguousarray(grad_c_np)
-        if not argmax_np.flags["C_CONTIGUOUS"]:
-            argmax_np = np.ascontiguousarray(argmax_np)
-
-        grad_a_flat = tropical_gemm.backward_a(grad_c_np, argmax_np, k)
-        grad_b_flat = tropical_gemm.backward_b(grad_c_np, argmax_np, k)
-
-        grad_a = torch.from_numpy(np.array(grad_a_flat).reshape(m, k)).to(grad_c.device)
-        grad_b = torch.from_numpy(np.array(grad_b_flat).reshape(k, n)).to(grad_c.device)
-
-        return grad_a, grad_b
-
-
-class TropicalMaxMulMatmul(torch.autograd.Function):
-    """
-    MaxMul tropical matmul with custom backward.
-
-    Forward: C[i,j] = max_k(A[i,k] * B[k,j])
-
-    Backward: The gradient is different from MaxPlus/MinPlus because
-    the operation is multiplication, not addition.
-    - grad_A[i,k] = grad_C[i,j] * B[k,j] if k == argmax[i,j]
-    - grad_B[k,j] = grad_C[i,j] * A[i,k] if k == argmax[i,j]
-    """
-
-    @staticmethod
-    def forward(ctx, a, b):
-        m, k = a.shape
-        n = b.shape[1]
-
-        a_np = a.detach().cpu().numpy().astype(np.float32)
-        b_np = b.detach().cpu().numpy().astype(np.float32)
-
-        if not a_np.flags["C_CONTIGUOUS"]:
-            a_np = np.ascontiguousarray(a_np)
-        if not b_np.flags["C_CONTIGUOUS"]:
-            b_np = np.ascontiguousarray(b_np)
-
-        c_flat, argmax_flat = tropical_gemm.maxmul_matmul_with_argmax(a_np, b_np)
-
-        c_np = np.array(c_flat).reshape(m, n)
-        argmax_np = np.array(argmax_flat).reshape(m, n)
-
-        # Save inputs and argmax for backward
-        ctx.save_for_backward(
-            torch.from_numpy(a_np),
-            torch.from_numpy(b_np),
-            torch.from_numpy(argmax_np),
-        )
-        ctx.k = k
-        ctx.m = m
-        ctx.n = n
-
-        return torch.from_numpy(c_np).to(a.device)
-
-    @staticmethod
-    def backward(ctx, grad_c):
-        a, b, argmax = ctx.saved_tensors
-        k_dim = ctx.k
-        m = ctx.m
-        n = ctx.n
-
-        # Use Rust backend for MaxMul backward
-        grad_c_np = grad_c.cpu().numpy().astype(np.float32)
-        argmax_np = argmax.numpy().astype(np.int32)
-        a_np = a.numpy().astype(np.float32)
-        b_np = b.numpy().astype(np.float32)
-
-        if not grad_c_np.flags["C_CONTIGUOUS"]:
-            grad_c_np = np.ascontiguousarray(grad_c_np)
-        if not argmax_np.flags["C_CONTIGUOUS"]:
-            argmax_np = np.ascontiguousarray(argmax_np)
-
-        grad_a_flat = tropical_gemm.maxmul_backward_a(grad_c_np, argmax_np, b_np)
-        grad_b_flat = tropical_gemm.maxmul_backward_b(grad_c_np, argmax_np, a_np)
-
-        grad_a = torch.from_numpy(np.array(grad_a_flat).reshape(m, k_dim)).to(grad_c.device)
-        grad_b = torch.from_numpy(np.array(grad_b_flat).reshape(k_dim, n)).to(grad_c.device)
-
-        return grad_a, grad_b
-
-
-def tropical_maxplus_matmul(a, b):
-    return TropicalMaxPlusMatmul.apply(a, b)
-
-
-def tropical_minplus_matmul(a, b):
-    return TropicalMinPlusMatmul.apply(a, b)
-
-
-def tropical_maxmul_matmul(a, b):
-    return TropicalMaxMulMatmul.apply(a, b)
+from tropical_gemm.pytorch import (
+    TropicalMaxPlusMatmul,
+    TropicalMinPlusMatmul,
+    TropicalMaxMulMatmul,
+    tropical_maxplus_matmul,
+    tropical_minplus_matmul,
+    tropical_maxmul_matmul,
+    tropical_maxplus_matmul_gpu,
+    tropical_minplus_matmul_gpu,
+    GPU_AVAILABLE,
+)
 
 
 # ============================================================================
@@ -634,3 +460,122 @@ def test_rectangular_gradient():
     # Each output element contributes to exactly one gradient
     assert abs(a.grad.sum().item() - 6) < 0.01  # 2x3 = 6 elements
     assert abs(b.grad.sum().item() - 6) < 0.01
+
+
+# ============================================================================
+# GPU tests (when available)
+# ============================================================================
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_gpu_maxplus_forward():
+    """Test GPU MaxPlus forward pass matches CPU."""
+    torch.manual_seed(42)
+
+    a = torch.randn(4, 3)
+    b = torch.randn(3, 5)
+
+    c_cpu = tropical_maxplus_matmul(a, b)
+    c_gpu = tropical_maxplus_matmul_gpu(a, b)
+
+    assert torch.allclose(c_cpu, c_gpu, atol=1e-4), f"GPU result differs from CPU"
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_gpu_minplus_forward():
+    """Test GPU MinPlus forward pass matches CPU."""
+    torch.manual_seed(42)
+
+    a = torch.randn(4, 3)
+    b = torch.randn(3, 5)
+
+    c_cpu = tropical_minplus_matmul(a, b)
+    c_gpu = tropical_minplus_matmul_gpu(a, b)
+
+    assert torch.allclose(c_cpu, c_gpu, atol=1e-4), f"GPU result differs from CPU"
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_gpu_maxplus_gradient():
+    """Test GPU MaxPlus backward pass."""
+    torch.manual_seed(42)
+
+    a = torch.tensor([[1.0, 10.0], [5.0, 2.0]], requires_grad=True)
+    b = torch.tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+
+    c = tropical_maxplus_matmul_gpu(a, b)
+    loss = c.sum()
+    loss.backward()
+
+    # Check gradient structure
+    assert a.grad is not None
+    assert b.grad is not None
+    assert abs(a.grad.sum().item() - c.numel()) < 0.01
+    assert abs(b.grad.sum().item() - c.numel()) < 0.01
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_gpu_optimization():
+    """Test GPU optimization convergence."""
+    torch.manual_seed(42)
+
+    a = torch.randn(3, 4, requires_grad=True)
+    b = torch.randn(4, 3, requires_grad=True)
+    target = torch.randn(3, 3)
+
+    optimizer = torch.optim.Adam([a, b], lr=0.1)
+
+    initial_loss = None
+    final_loss = None
+
+    for step in range(10):
+        optimizer.zero_grad()
+
+        c = tropical_maxplus_matmul_gpu(a, b)
+        loss = ((c - target) ** 2).mean()
+
+        if step == 0:
+            initial_loss = loss.item()
+
+        loss.backward()
+        optimizer.step()
+
+        final_loss = loss.item()
+
+    assert final_loss < initial_loss, f"Loss did not decrease: {initial_loss} -> {final_loss}"
+
+
+# ============================================================================
+# Module import tests
+# ============================================================================
+
+
+def test_pytorch_module_exports():
+    """Test that the pytorch module exports all expected functions."""
+    from tropical_gemm import pytorch
+
+    # Check that all expected items are exported
+    assert hasattr(pytorch, "TropicalMaxPlusMatmul")
+    assert hasattr(pytorch, "TropicalMinPlusMatmul")
+    assert hasattr(pytorch, "TropicalMaxMulMatmul")
+    assert hasattr(pytorch, "tropical_maxplus_matmul")
+    assert hasattr(pytorch, "tropical_minplus_matmul")
+    assert hasattr(pytorch, "tropical_maxmul_matmul")
+    assert hasattr(pytorch, "tropical_maxplus_matmul_gpu")
+    assert hasattr(pytorch, "tropical_minplus_matmul_gpu")
+    assert hasattr(pytorch, "GPU_AVAILABLE")
+
+
+def test_main_module_exports():
+    """Test that the main module exports all expected functions."""
+    import tropical_gemm
+
+    # Check core functions
+    assert hasattr(tropical_gemm, "maxplus_matmul")
+    assert hasattr(tropical_gemm, "minplus_matmul")
+    assert hasattr(tropical_gemm, "maxmul_matmul")
+    assert hasattr(tropical_gemm, "maxplus_matmul_with_argmax")
+    assert hasattr(tropical_gemm, "backward_a")
+    assert hasattr(tropical_gemm, "backward_b")
+    assert hasattr(tropical_gemm, "cuda_available")
+    assert hasattr(tropical_gemm, "__version__")

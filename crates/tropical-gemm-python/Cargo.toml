@@ -8,11 +8,16 @@ repository.workspace = true
 description = "Python bindings for tropical matrix multiplication"
 
 [lib]
-name = "tropical_gemm"
+name = "_core"
 crate-type = ["cdylib"]
 doc = false  # Docs conflict with tropical-gemm crate; use Python docstrings instead
 
+[features]
+default = []
+cuda = ["tropical-gemm-cuda"]
+
 [dependencies]
 tropical-gemm.workspace = true
+tropical-gemm-cuda = { workspace = true, optional = true }
 pyo3 = { version = "0.23", features = ["extension-module"] }
 numpy = "0.23"
