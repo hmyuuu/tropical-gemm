@@ -10,14 +10,20 @@ Tropical semiring: C[i,j] = max_k(A[i,k] + B[k,j])
 - The "+" combines inputs with learned weights (in log-space sense)
 
 Architecture:
-- Hybrid MLP: Linear -> ReLU -> TropicalMaxPlus -> LayerNorm -> Linear
+- Hybrid MLP: Linear -> TropicalMaxPlus -> LayerNorm -> Linear -> TropicalMaxPlus -> Linear
 - Standard MLP: Linear -> ReLU -> Linear -> ReLU -> Linear
+
+Note: This example uses CPU by default. GPU acceleration is more beneficial
+for large matrices (1024x1024+). For small matrices like this example,
+kernel launch overhead exceeds the computation benefit.
 
 Usage:
     pip install tropical-gemm[torch] torchvision
-    python examples/mnist_tropical.py
+    python examples/mnist_tropical.py          # CPU mode (faster for small matrices)
+    python examples/mnist_tropical.py --gpu    # GPU mode (for demonstration)
 """
 
+import argparse
 import time
 import torch
 import torch.nn as nn
@@ -69,33 +75,76 @@ class TropicalLinear(nn.Module):
         return f"in_features={self.in_features}, out_features={self.out_features}, gpu={self.use_gpu}"
 
 
+class TropicalActivation(nn.Module):
+    """
+    Tropical MaxPlus activation layer.
+
+    Computes: y[i] = max_k(x[k] + W[k,i]) where W is a learnable activation matrix.
+
+    This replaces ReLU as the non-linearity. The tropical max-plus operation
+    selects the maximum weighted path, providing winner-take-all dynamics.
+
+    Args:
+        features: Number of features (input = output dimension)
+        use_gpu: If True and GPU available, use CUDA acceleration
+    """
+
+    def __init__(self, features: int, use_gpu: bool = True):
+        super().__init__()
+        self.features = features
+        self.use_gpu = use_gpu and GPU_AVAILABLE
+
+        # Learnable activation weights (initialized near identity-like)
+        self.weight = nn.Parameter(torch.randn(features, features) * 0.1)
+        self.norm = nn.LayerNorm(features)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_gpu:
+            out = tropical_maxplus_matmul_gpu(x, self.weight)
+        else:
+            out = tropical_maxplus_matmul(x, self.weight)
+        return self.norm(out)
+
+
 class HybridTropicalMLP(nn.Module):
     """
-    Hybrid MLP combining standard and tropical layers.
+    Hybrid MLP using TropicalMaxPlus as activation function.
 
     Architecture:
-        Input(784) -> Linear(256) -> ReLU -> TropicalMaxPlus(128) -> Linear(10)
+        Input(784) -> Linear(256) -> TropicalMaxPlus(256)
+                   -> Linear(128) -> TropicalMaxPlus(128)
+                   -> Linear(10)
 
-    The initial Linear+ReLU prepares features for the tropical layer,
-    which provides a different kind of non-linearity (max selection).
+    The TropicalMaxPlus layers replace ReLU activations, providing
+    max-based non-linearity with learnable activation weights.
     """
 
     def __init__(self, use_gpu: bool = True):
         super().__init__()
 
-        # Standard input layer
-        self.fc_in = nn.Linear(784, 256)
+        # Layer 1: Linear + TropicalMaxPlus activation
+        self.fc1 = nn.Linear(784, 256)
+        self.act1 = TropicalActivation(256, use_gpu=use_gpu)
 
-        # Tropical hidden layer (replaces Linear+ReLU)
-        self.tropical = TropicalLinear(256, 128, use_gpu=use_gpu)
+        # Layer 2: Linear + TropicalMaxPlus activation
+        self.fc2 = nn.Linear(256, 128)
+        self.act2 = TropicalActivation(128, use_gpu=use_gpu)
 
-        # Standard output layer
+        # Output layer (no activation - logits for CrossEntropyLoss)
         self.fc_out = nn.Linear(128, 10)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.view(x.size(0), -1)
-        x = F.relu(self.fc_in(x))
-        x = self.tropical(x)
+
+        # Layer 1: Linear -> TropicalMaxPlus
+        x = self.fc1(x)
+        x = self.act1(x)
+
+        # Layer 2: Linear -> TropicalMaxPlus
+        x = self.fc2(x)
+        x = self.act2(x)
+
+        # Output
         return self.fc_out(x)
 
 
@@ -188,14 +237,27 @@ def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, name="Mod
 
 
 def main():
+    parser = argparse.ArgumentParser(description="MNIST with Tropical Neural Networks")
+    parser.add_argument(
+        "--gpu", action="store_true",
+        help="Use GPU for tropical layers (slower for small matrices due to overhead)"
+    )
+    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
+    args = parser.parse_args()
+
+    use_gpu = args.gpu and GPU_AVAILABLE
+
     print("=" * 60)
     print("MNIST Classification: Tropical vs ReLU Networks")
     print("=" * 60)
     print(f"\nTropical GPU Available: {GPU_AVAILABLE}")
+    print(f"Using GPU for tropical layers: {use_gpu}")
+    if not use_gpu:
+        print("(Use --gpu to enable GPU mode)")
 
     # Hyperparameters
     batch_size = 128
-    epochs = 10
+    epochs = args.epochs
     lr = 0.001
 
     # Data loading
@@ -218,7 +280,7 @@ def main():
     print(f"Test samples: {len(test_dataset)}")
 
     # Train Hybrid Tropical MLP
-    tropical_model = HybridTropicalMLP(use_gpu=GPU_AVAILABLE)
+    tropical_model = HybridTropicalMLP(use_gpu=use_gpu)
     tropical_acc = train_model(
         tropical_model,
         train_loader,
@@ -247,7 +309,7 @@ def main():
     print(f"  Standard MLP (ReLU):  {standard_acc:.1f}% test accuracy")
     print()
     print("Architecture comparison:")
-    print("  Tropical: Linear -> ReLU -> TropicalMaxPlus -> LayerNorm -> Linear")
+    print("  Tropical: Linear -> TropicalMaxPlus(256) -> Linear -> TropicalMaxPlus(128) -> Linear")
     print("  Standard: Linear -> ReLU -> Linear -> ReLU -> Linear")
     print()
     print("The tropical layer uses max_k(x[k] + w[k]) which provides")
