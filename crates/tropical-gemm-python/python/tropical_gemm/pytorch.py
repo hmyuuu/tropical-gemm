@@ -397,8 +397,6 @@ class TropicalMaxPlusMatmulGPU(torch.autograd.Function):
 
         # Compute gradients on GPU using scatter operations
         grad_a = torch.zeros(m, k, device=grad_c.device, dtype=grad_c.dtype)
-        grad_b = torch.zeros(k, n, device=grad_c.device, dtype=grad_c.dtype)
-
         grad_a.scatter_add_(1, argmax, grad_c)
 
         argmax_t = argmax.t()
@@ -450,8 +448,6 @@ class TropicalMinPlusMatmulGPU(torch.autograd.Function):
         n = ctx.n
 
         grad_a = torch.zeros(m, k, device=grad_c.device, dtype=grad_c.dtype)
-        grad_b = torch.zeros(k, n, device=grad_c.device, dtype=grad_c.dtype)
-
         grad_a.scatter_add_(1, argmin, grad_c)
 
         argmin_t = argmin.t()
@@ -519,8 +515,6 @@ class TropicalMaxMulMatmulGPU(torch.autograd.Function):
 
         # Compute gradients
         grad_a = torch.zeros(m, k_dim, device=grad_c.device, dtype=grad_c.dtype)
-        grad_b = torch.zeros(k_dim, n, device=grad_c.device, dtype=grad_c.dtype)
-
         grad_a.scatter_add_(1, argmax, grad_c * b_winning)
 
         argmax_t = argmax.t()

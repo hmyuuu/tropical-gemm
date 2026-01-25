@@ -1181,6 +1181,14 @@ mod gpu {
             )));
         }
 
+        // Validate: both tensors must be on the same device ID (for multi-GPU)
+        if a_device.device_id != b_device.device_id {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Tensors must be on the same device: A is on device {}, B is on device {}",
+                a_device.device_id, b_device.device_id
+            )));
+        }
+
         // Get dtype and validate
         let a_dtype = TensorView::dtype(&a_tensor);
         let b_dtype = TensorView::dtype(&b_tensor);
@@ -1238,8 +1246,6 @@ mod gpu {
             ));
         }
 
-        // Check device type
-        
         match a_device.device_type {
             DeviceType::Cuda | DeviceType::CudaHost => {
                 // GPU path: zero-copy using DLPack
@@ -1328,6 +1334,14 @@ mod gpu {
             )));
         }
 
+        // Validate: both tensors must be on the same device ID (for multi-GPU)
+        if a_device.device_id != b_device.device_id {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Tensors must be on the same device: A is on device {}, B is on device {}",
+                a_device.device_id, b_device.device_id
+            )));
+        }
+
         let a_dtype = TensorView::dtype(&a_tensor);
         let b_dtype = TensorView::dtype(&b_tensor);
         if a_dtype != b_dtype {
@@ -1380,7 +1394,6 @@ mod gpu {
             ));
         }
 
-        
         match a_device.device_type {
             DeviceType::Cuda | DeviceType::CudaHost => {
                 let a_ptr = TensorView::data_ptr(&a_tensor) as u64;
@@ -1461,6 +1474,14 @@ mod gpu {
             )));
         }
 
+        // Validate: both tensors must be on the same device ID (for multi-GPU)
+        if a_device.device_id != b_device.device_id {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Tensors must be on the same device: A is on device {}, B is on device {}",
+                a_device.device_id, b_device.device_id
+            )));
+        }
+
         let a_dtype = TensorView::dtype(&a_tensor);
         let b_dtype = TensorView::dtype(&b_tensor);
         if a_dtype != b_dtype {
@@ -1513,7 +1534,6 @@ mod gpu {
             ));
         }
 
-        
         match a_device.device_type {
             DeviceType::Cuda | DeviceType::CudaHost => {
                 let a_ptr = TensorView::data_ptr(&a_tensor) as u64;

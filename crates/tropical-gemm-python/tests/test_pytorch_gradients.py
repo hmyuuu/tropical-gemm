@@ -615,11 +615,10 @@ def test_dlpack_maxplus_cpu_tensor():
     b = torch.randn(20, 15, dtype=torch.float32)
 
     # Call DLPack function with CPU tensors - should fall back to CPU backend
-    c_flat, argmax_flat = tropical_gemm.maxplus_matmul_dlpack(a, b)
+    c_flat, _ = tropical_gemm.maxplus_matmul_dlpack(a, b)
 
     # Convert to torch tensors
     c = torch.from_numpy(np.array(c_flat).reshape(10, 15))
-    argmax = torch.from_numpy(np.array(argmax_flat).reshape(10, 15))
 
     # Verify against reference implementation
     a_np = a.numpy()
@@ -638,7 +637,7 @@ def test_dlpack_minplus_cpu_tensor():
     a = torch.randn(10, 20, dtype=torch.float32)
     b = torch.randn(20, 15, dtype=torch.float32)
 
-    c_flat, argmax_flat = tropical_gemm.minplus_matmul_dlpack(a, b)
+    c_flat, _ = tropical_gemm.minplus_matmul_dlpack(a, b)
     c = torch.from_numpy(np.array(c_flat).reshape(10, 15))
 
     # Verify against reference
@@ -658,7 +657,7 @@ def test_dlpack_maxmul_cpu_tensor():
     a = torch.randn(10, 20, dtype=torch.float32).abs() + 0.1  # Positive values for maxmul
     b = torch.randn(20, 15, dtype=torch.float32).abs() + 0.1
 
-    c_flat, argmax_flat = tropical_gemm.maxmul_matmul_dlpack(a, b)
+    c_flat, _ = tropical_gemm.maxmul_matmul_dlpack(a, b)
     c = torch.from_numpy(np.array(c_flat).reshape(10, 15))
 
     # Verify against reference
@@ -679,7 +678,7 @@ def test_dlpack_gpu_tensor_zero_copy():
     b = torch.randn(50, 80, dtype=torch.float32, device='cuda')
 
     # This should use the zero-copy DLPack path with Rust CUDA backend
-    c_flat, argmax_flat = tropical_gemm.maxplus_matmul_dlpack(a, b)
+    c_flat, _ = tropical_gemm.maxplus_matmul_dlpack(a, b)
     c = torch.from_numpy(np.array(c_flat).reshape(100, 80))
 
     # Verify result matches CPU reference
@@ -724,9 +723,8 @@ def test_dlpack_contiguity_check():
     a = torch.randn(10, 20, dtype=torch.float32)
     b = torch.randn(20, 15, dtype=torch.float32)
 
-    # Create non-contiguous tensor by transposing twice with different dims
-    a_noncontig = a.t().t()  # This is still contiguous
-    a_noncontig = a[:, ::2]  # This is non-contiguous (stride != 1)
+    # Create non-contiguous tensor (stride != 1)
+    a_noncontig = a[:, ::2]
 
     # Should raise an error for non-contiguous tensors
     with pytest.raises(Exception):  # Could be ValueError or RuntimeError
@@ -741,5 +739,9 @@ def test_dlpack_dtype_check():
 
     with pytest.raises(Exception):  # Should raise error for non-f32
         tropical_gemm.maxplus_matmul_dlpack(a, b)
+
+
+def test_tropical_gemm_has_metadata():
+    """Basic sanity checks on tropical_gemm module attributes."""
     assert hasattr(tropical_gemm, "cuda_available")
     assert hasattr(tropical_gemm, "__version__")
