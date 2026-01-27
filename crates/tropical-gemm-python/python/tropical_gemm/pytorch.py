@@ -36,6 +36,9 @@ import tropical_gemm
 # Check if GPU is available
 GPU_AVAILABLE = tropical_gemm.cuda_available()
 
+# Check if MPS (Apple Metal) is available
+MPS_AVAILABLE = torch.backends.mps.is_available() and torch.backends.mps.is_built()
+
 
 # ===========================================================================
 # Helper: Use Rust CPU backend as fallback for GPU tensors without DLPack
@@ -527,6 +530,140 @@ class TropicalMaxMulMatmulGPU(torch.autograd.Function):
 
 
 # ===========================================================================
+# MPS-Accelerated Autograd Functions (Apple Metal via PyTorch)
+# ===========================================================================
+
+
+class TropicalMaxPlusMatmulMPS(torch.autograd.Function):
+    """
+    MPS-accelerated MaxPlus tropical matrix multiplication for Apple Silicon.
+
+    Uses PyTorch's MPS backend for GPU acceleration on macOS.
+    Forward: C[i,j] = max_k(A[i,k] + B[k,j])
+    """
+
+    @staticmethod
+    def forward(ctx, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        # a: (M, K), b: (K, N)
+        # Broadcast: a[:, :, None] + b[None, :, :] -> (M, K, N)
+        sums = a.unsqueeze(2) + b.unsqueeze(0)
+        c, argmax = sums.max(dim=1)
+
+        ctx.save_for_backward(argmax)
+        ctx.k = a.shape[1]
+        ctx.m = a.shape[0]
+        ctx.n = b.shape[1]
+
+        return c
+
+    @staticmethod
+    def backward(ctx, grad_c: torch.Tensor):
+        (argmax,) = ctx.saved_tensors
+        k = ctx.k
+        m = ctx.m
+        n = ctx.n
+
+        # Compute gradients using scatter operations (runs on MPS)
+        grad_a = torch.zeros(m, k, device=grad_c.device, dtype=grad_c.dtype)
+        grad_a.scatter_add_(1, argmax, grad_c)
+
+        argmax_t = argmax.t().contiguous()
+        grad_c_t = grad_c.t().contiguous()
+        grad_b_t = torch.zeros(n, k, device=grad_c.device, dtype=grad_c.dtype)
+        grad_b_t.scatter_add_(1, argmax_t, grad_c_t)
+        grad_b = grad_b_t.t()
+
+        return grad_a, grad_b
+
+
+class TropicalMinPlusMatmulMPS(torch.autograd.Function):
+    """
+    MPS-accelerated MinPlus tropical matrix multiplication for Apple Silicon.
+
+    Uses PyTorch's MPS backend for GPU acceleration on macOS.
+    Forward: C[i,j] = min_k(A[i,k] + B[k,j])
+    """
+
+    @staticmethod
+    def forward(ctx, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        sums = a.unsqueeze(2) + b.unsqueeze(0)
+        c, argmin = sums.min(dim=1)
+
+        ctx.save_for_backward(argmin)
+        ctx.k = a.shape[1]
+        ctx.m = a.shape[0]
+        ctx.n = b.shape[1]
+
+        return c
+
+    @staticmethod
+    def backward(ctx, grad_c: torch.Tensor):
+        (argmin,) = ctx.saved_tensors
+        k = ctx.k
+        m = ctx.m
+        n = ctx.n
+
+        grad_a = torch.zeros(m, k, device=grad_c.device, dtype=grad_c.dtype)
+        grad_a.scatter_add_(1, argmin, grad_c)
+
+        argmin_t = argmin.t().contiguous()
+        grad_c_t = grad_c.t().contiguous()
+        grad_b_t = torch.zeros(n, k, device=grad_c.device, dtype=grad_c.dtype)
+        grad_b_t.scatter_add_(1, argmin_t, grad_c_t)
+        grad_b = grad_b_t.t()
+
+        return grad_a, grad_b
+
+
+class TropicalMaxMulMatmulMPS(torch.autograd.Function):
+    """
+    MPS-accelerated MaxMul tropical matrix multiplication for Apple Silicon.
+
+    Uses PyTorch's MPS backend for GPU acceleration on macOS.
+    Forward: C[i,j] = max_k(A[i,k] * B[k,j])
+    """
+
+    @staticmethod
+    def forward(ctx, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        # a: (M, K), b: (K, N)
+        products = a.unsqueeze(2) * b.unsqueeze(0)
+        c, argmax = products.max(dim=1)
+
+        ctx.save_for_backward(a.detach(), b.detach(), argmax)
+        ctx.k = a.shape[1]
+        ctx.m = a.shape[0]
+        ctx.n = b.shape[1]
+
+        return c
+
+    @staticmethod
+    def backward(ctx, grad_c: torch.Tensor):
+        a, b, argmax = ctx.saved_tensors
+        k_dim = ctx.k
+        m = ctx.m
+        n = ctx.n
+
+        # Get the winning values from B: b[argmax[i,j], j] for each (i, j)
+        j_indices = torch.arange(n, device=b.device).unsqueeze(0).expand(m, -1)
+        b_winning = b[argmax, j_indices]
+
+        # Get the winning values from A
+        a_winning = torch.gather(a, 1, argmax)
+
+        # Compute gradients
+        grad_a = torch.zeros(m, k_dim, device=grad_c.device, dtype=grad_c.dtype)
+        grad_a.scatter_add_(1, argmax, grad_c * b_winning)
+
+        argmax_t = argmax.t().contiguous()
+        grad_c_a_t = (grad_c * a_winning).t().contiguous()
+        grad_b_t = torch.zeros(n, k_dim, device=grad_c.device, dtype=grad_c.dtype)
+        grad_b_t.scatter_add_(1, argmax_t, grad_c_a_t)
+        grad_b = grad_b_t.t()
+
+        return grad_a, grad_b
+
+
+# ===========================================================================
 # Convenience functions
 # ===========================================================================
 
@@ -535,6 +672,10 @@ def tropical_maxplus_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """
     MaxPlus tropical matrix multiplication: C[i,j] = max_k(A[i,k] + B[k,j])
 
+    Automatically selects the best backend based on tensor device:
+    - MPS tensors: Uses Apple Metal GPU acceleration
+    - CPU tensors: Uses optimized Rust SIMD backend
+
     Args:
         a: Input tensor of shape (M, K)
         b: Input tensor of shape (K, N)
@@ -542,6 +683,8 @@ def tropical_maxplus_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     Returns:
         Output tensor of shape (M, N)
     """
+    if a.device.type == "mps":
+        return TropicalMaxPlusMatmulMPS.apply(a, b)
     return TropicalMaxPlusMatmul.apply(a, b)
 
 
@@ -549,6 +692,10 @@ def tropical_minplus_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """
     MinPlus tropical matrix multiplication: C[i,j] = min_k(A[i,k] + B[k,j])
 
+    Automatically selects the best backend based on tensor device:
+    - MPS tensors: Uses Apple Metal GPU acceleration
+    - CPU tensors: Uses optimized Rust SIMD backend
+
     Args:
         a: Input tensor of shape (M, K)
         b: Input tensor of shape (K, N)
@@ -556,6 +703,8 @@ def tropical_minplus_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     Returns:
         Output tensor of shape (M, N)
     """
+    if a.device.type == "mps":
+        return TropicalMinPlusMatmulMPS.apply(a, b)
     return TropicalMinPlusMatmul.apply(a, b)
 
 
@@ -563,6 +712,10 @@ def tropical_maxmul_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """
     MaxMul tropical matrix multiplication: C[i,j] = max_k(A[i,k] * B[k,j])
 
+    Automatically selects the best backend based on tensor device:
+    - MPS tensors: Uses Apple Metal GPU acceleration
+    - CPU tensors: Uses optimized Rust SIMD backend
+
     Args:
         a: Input tensor of shape (M, K)
         b: Input tensor of shape (K, N)
@@ -570,6 +723,8 @@ def tropical_maxmul_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     Returns:
         Output tensor of shape (M, N)
     """
+    if a.device.type == "mps":
+        return TropicalMaxMulMatmulMPS.apply(a, b)
     return TropicalMaxMulMatmul.apply(a, b)
 
 
@@ -624,24 +779,75 @@ def tropical_maxmul_matmul_gpu(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor
     return TropicalMaxMulMatmulGPU.apply(a, b)
 
 
+def tropical_maxplus_matmul_mps(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """
+    MPS-accelerated MaxPlus tropical matrix multiplication for Apple Silicon.
+
+    Args:
+        a: Input tensor of shape (M, K) on MPS device
+        b: Input tensor of shape (K, N) on MPS device
+
+    Returns:
+        Output tensor of shape (M, N) on MPS device
+    """
+    return TropicalMaxPlusMatmulMPS.apply(a, b)
+
+
+def tropical_minplus_matmul_mps(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """
+    MPS-accelerated MinPlus tropical matrix multiplication for Apple Silicon.
+
+    Args:
+        a: Input tensor of shape (M, K) on MPS device
+        b: Input tensor of shape (K, N) on MPS device
+
+    Returns:
+        Output tensor of shape (M, N) on MPS device
+    """
+    return TropicalMinPlusMatmulMPS.apply(a, b)
+
+
+def tropical_maxmul_matmul_mps(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """
+    MPS-accelerated MaxMul tropical matrix multiplication for Apple Silicon.
+
+    Args:
+        a: Input tensor of shape (M, K) on MPS device
+        b: Input tensor of shape (K, N) on MPS device
+
+    Returns:
+        Output tensor of shape (M, N) on MPS device
+    """
+    return TropicalMaxMulMatmulMPS.apply(a, b)
+
+
 __all__ = [
     # CPU autograd functions
     "TropicalMaxPlusMatmul",
     "TropicalMinPlusMatmul",
     "TropicalMaxMulMatmul",
-    # GPU autograd functions
+    # GPU autograd functions (CUDA)
     "TropicalMaxPlusMatmulGPU",
     "TropicalMinPlusMatmulGPU",
     "TropicalMaxMulMatmulGPU",
-    # Convenience functions
+    # MPS autograd functions (Apple Metal)
+    "TropicalMaxPlusMatmulMPS",
+    "TropicalMinPlusMatmulMPS",
+    "TropicalMaxMulMatmulMPS",
+    # Convenience functions (auto-detect device)
     "tropical_maxplus_matmul",
     "tropical_minplus_matmul",
     "tropical_maxmul_matmul",
+    # Explicit GPU functions (CUDA)
     "tropical_maxplus_matmul_gpu",
     "tropical_minplus_matmul_gpu",
     "tropical_maxmul_matmul_gpu",
-    # GPU availability flag
+    # Explicit MPS functions (Apple Metal)
+    "tropical_maxplus_matmul_mps",
+    "tropical_minplus_matmul_mps",
+    "tropical_maxmul_matmul_mps",
+    # Availability flags
     "GPU_AVAILABLE",
-    # DLPack availability flag
+    "MPS_AVAILABLE",
     "_DLPACK_AVAILABLE",
 ]
