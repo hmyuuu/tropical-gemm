@@ -989,6 +989,332 @@ def test_batched_gradient_accumulation():
     assert torch.allclose(grad_a_2, 2 * grad_a_1), "Gradient accumulation incorrect"
 
 
+# ============================================================================
+# Additional Batched CPU Gradient Tests
+# ============================================================================
+
+
+def test_batched_numerical_gradient_minplus():
+    """Verify batched MinPlus gradients using finite differences."""
+    torch.manual_seed(42)
+
+    batch, m, k, n = 2, 2, 3, 2
+    a = (torch.randn(batch, m, k) * 3).requires_grad_(True)
+    b = (torch.randn(batch, k, n) * 3).requires_grad_(True)
+
+    c = tropical_minplus_matmul_batched(a, b)
+    loss = c.sum()
+    loss.backward()
+
+    analytical_grad_a = a.grad.clone()
+
+    eps = 1e-4
+    numerical_grad_a = torch.zeros_like(a)
+
+    for bi in range(batch):
+        for i in range(m):
+            for j in range(k):
+                a_plus = a.detach().clone()
+                a_plus[bi, i, j] += eps
+                a_minus = a.detach().clone()
+                a_minus[bi, i, j] -= eps
+
+                c_plus = tropical_minplus_matmul_batched(a_plus, b.detach()).sum()
+                c_minus = tropical_minplus_matmul_batched(a_minus, b.detach()).sum()
+
+                numerical_grad_a[bi, i, j] = (c_plus - c_minus) / (2 * eps)
+
+    assert torch.allclose(analytical_grad_a, numerical_grad_a, atol=0.1), \
+        f"MinPlus grad_A mismatch:\nAnalytical: {analytical_grad_a}\nNumerical: {numerical_grad_a}"
+
+
+def test_batched_numerical_gradient_maxmul():
+    """Verify batched MaxMul gradients using finite differences."""
+    torch.manual_seed(42)
+
+    batch, m, k, n = 2, 2, 3, 2
+    # Use positive values for MaxMul
+    a = (torch.randn(batch, m, k).abs() * 2 + 0.5).requires_grad_(True)
+    b = (torch.randn(batch, k, n).abs() * 2 + 0.5).requires_grad_(True)
+
+    c = tropical_maxmul_matmul_batched(a, b)
+    loss = c.sum()
+    loss.backward()
+
+    analytical_grad_a = a.grad.clone()
+
+    eps = 1e-4
+    numerical_grad_a = torch.zeros_like(a)
+
+    for bi in range(batch):
+        for i in range(m):
+            for j in range(k):
+                a_plus = a.detach().clone()
+                a_plus[bi, i, j] += eps
+                a_minus = a.detach().clone()
+                a_minus[bi, i, j] -= eps
+
+                c_plus = tropical_maxmul_matmul_batched(a_plus, b.detach()).sum()
+                c_minus = tropical_maxmul_matmul_batched(a_minus, b.detach()).sum()
+
+                numerical_grad_a[bi, i, j] = (c_plus - c_minus) / (2 * eps)
+
+    assert torch.allclose(analytical_grad_a, numerical_grad_a, atol=0.1), \
+        f"MaxMul grad_A mismatch:\nAnalytical: {analytical_grad_a}\nNumerical: {numerical_grad_a}"
+
+
+def test_batched_gradient_sparsity():
+    """Test that batched tropical gradients have correct sparsity pattern."""
+    torch.manual_seed(42)
+
+    batch, m, k, n = 2, 4, 5, 3
+    a = (torch.randn(batch, m, k) * 10).requires_grad_(True)
+    b = (torch.randn(batch, k, n) * 10).requires_grad_(True)
+
+    c = tropical_maxplus_matmul_batched(a, b)
+    c.sum().backward()
+
+    # For each output C[b,i,j], exactly one k index contributes
+    # Multiple outputs may share the same argmax, so nnz <= batch * m * n
+    # But gradients must be non-trivial (sum equals number of outputs)
+    max_nnz = batch * m * n
+    actual_nnz = (a.grad != 0).sum().item()
+
+    assert 0 < actual_nnz <= max_nnz, \
+        f"Expected 0 < nnz <= {max_nnz}, got {actual_nnz}"
+    # Total gradient mass should equal number of outputs (each contributes 1)
+    assert abs(a.grad.sum().item() - c.numel()) < 0.01, \
+        "Total gradient should equal number of output elements"
+
+
+# ============================================================================
+# Additional Non-Batched GPU Gradient Tests
+# ============================================================================
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_gpu_minplus_gradient():
+    """Verify MinPlus gradient computation on GPU."""
+    a = torch.randn(8, 6, device="cuda", requires_grad=True)
+    b = torch.randn(6, 10, device="cuda", requires_grad=True)
+
+    c = tropical_minplus_matmul(a, b)
+    c.sum().backward()
+
+    assert a.grad is not None, "grad_a should be computed"
+    assert b.grad is not None, "grad_b should be computed"
+    assert a.grad.device.type == "cuda", "grad_a should be on GPU"
+    assert b.grad.device.type == "cuda", "grad_b should be on GPU"
+    assert a.grad.shape == a.shape
+    assert b.grad.shape == b.shape
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_gpu_maxmul_gradient():
+    """Verify MaxMul gradient computation on GPU."""
+    # Use positive values for MaxMul
+    a = (torch.randn(8, 6, device="cuda").abs() + 0.1).requires_grad_(True)
+    b = (torch.randn(6, 10, device="cuda").abs() + 0.1).requires_grad_(True)
+
+    c = tropical_maxmul_matmul(a, b)
+    c.sum().backward()
+
+    assert a.grad is not None, "grad_a should be computed"
+    assert b.grad is not None, "grad_b should be computed"
+    assert a.grad.device.type == "cuda", "grad_a should be on GPU"
+    assert b.grad.device.type == "cuda", "grad_b should be on GPU"
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_gpu_gradient_accumulation():
+    """Verify gradient accumulation works correctly on GPU."""
+    a = torch.randn(4, 3, device="cuda", requires_grad=True)
+    b = torch.randn(3, 5, device="cuda")
+
+    c1 = tropical_maxplus_matmul(a, b)
+    c1.sum().backward()
+    grad1 = a.grad.clone()
+
+    c2 = tropical_maxplus_matmul(a, b)
+    c2.sum().backward()
+
+    assert torch.allclose(a.grad, 2 * grad1), "GPU gradients should accumulate"
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_gpu_gradient_sparsity():
+    """Test that GPU tropical gradients have correct sparsity pattern."""
+    torch.manual_seed(42)
+
+    m, k, n = 8, 6, 10
+    a = (torch.randn(m, k, device="cuda") * 10).requires_grad_(True)
+    b = (torch.randn(k, n, device="cuda") * 10).requires_grad_(True)
+
+    c = tropical_maxplus_matmul(a, b)
+    c.sum().backward()
+
+    # Multiple outputs may share same argmax, so nnz <= m * n
+    max_nnz = m * n
+    actual_nnz = (a.grad != 0).sum().item()
+
+    assert 0 < actual_nnz <= max_nnz, \
+        f"Expected 0 < nnz <= {max_nnz}, got {actual_nnz}"
+    # Total gradient mass should equal number of outputs
+    assert abs(a.grad.sum().item() - c.numel()) < 0.01, \
+        "Total gradient should equal number of output elements"
+
+
+# ============================================================================
+# Batched GPU Gradient Tests
+# ============================================================================
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_batched_gpu_maxplus_gradient_structure():
+    """Verify gradient structure of batched MaxPlus matmul on GPU."""
+    batch, m, k, n = 2, 3, 4, 2
+    a = torch.randn(batch, m, k, device="cuda", requires_grad=True)
+    b = torch.randn(batch, k, n, device="cuda", requires_grad=True)
+
+    c = tropical_maxplus_matmul_batched(a, b)
+    c.backward(torch.ones_like(c))
+
+    assert a.grad is not None and b.grad is not None
+    assert a.grad.device.type == "cuda"
+    assert b.grad.device.type == "cuda"
+    assert abs(a.grad.sum().item() - c.numel()) < 0.01
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_batched_gpu_minplus_gradient_structure():
+    """Verify gradient structure of batched MinPlus matmul on GPU."""
+    batch, m, k, n = 2, 3, 4, 2
+    a = torch.randn(batch, m, k, device="cuda", requires_grad=True)
+    b = torch.randn(batch, k, n, device="cuda", requires_grad=True)
+
+    c = tropical_minplus_matmul_batched(a, b)
+    c.backward(torch.ones_like(c))
+
+    assert a.grad is not None and b.grad is not None
+    assert a.grad.device.type == "cuda"
+    assert abs(a.grad.sum().item() - c.numel()) < 0.01
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_batched_gpu_maxmul_gradient_structure():
+    """Verify gradient structure of batched MaxMul matmul on GPU."""
+    batch, m, k, n = 2, 3, 4, 2
+    a = (torch.randn(batch, m, k, device="cuda").abs() + 0.1).requires_grad_(True)
+    b = (torch.randn(batch, k, n, device="cuda").abs() + 0.1).requires_grad_(True)
+
+    c = tropical_maxmul_matmul_batched(a, b)
+    c.backward(torch.ones_like(c))
+
+    assert a.grad is not None and b.grad is not None
+    assert a.grad.device.type == "cuda"
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_batched_gpu_numerical_gradient():
+    """Verify batched GPU gradients using finite differences."""
+    torch.manual_seed(42)
+
+    batch, m, k, n = 2, 2, 3, 2
+    a = (torch.randn(batch, m, k, device="cuda") * 3).requires_grad_(True)
+    b = (torch.randn(batch, k, n, device="cuda") * 3).requires_grad_(True)
+
+    c = tropical_maxplus_matmul_batched(a, b)
+    loss = c.sum()
+    loss.backward()
+
+    analytical_grad_a = a.grad.clone()
+
+    eps = 1e-4
+    numerical_grad_a = torch.zeros_like(a)
+
+    for bi in range(batch):
+        for i in range(m):
+            for j in range(k):
+                a_plus = a.detach().clone()
+                a_plus[bi, i, j] += eps
+                a_minus = a.detach().clone()
+                a_minus[bi, i, j] -= eps
+
+                c_plus = tropical_maxplus_matmul_batched(a_plus, b.detach()).sum()
+                c_minus = tropical_maxplus_matmul_batched(a_minus, b.detach()).sum()
+
+                numerical_grad_a[bi, i, j] = (c_plus - c_minus) / (2 * eps)
+
+    assert torch.allclose(analytical_grad_a, numerical_grad_a, atol=0.1), \
+        "GPU batched numerical gradient mismatch"
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_batched_gpu_optimization_convergence():
+    """Test that batched GPU gradients enable optimization to converge."""
+    torch.manual_seed(42)
+
+    batch, m, k, n = 3, 4, 5, 3
+    a = torch.randn(batch, m, k, device="cuda", requires_grad=True)
+    b = torch.randn(batch, k, n, device="cuda")
+    target = torch.randn(batch, m, n, device="cuda")
+
+    optimizer = torch.optim.SGD([a], lr=0.1)
+
+    initial_loss = None
+    for step in range(10):
+        optimizer.zero_grad()
+        c = tropical_maxplus_matmul_batched(a, b)
+        loss = torch.nn.functional.mse_loss(c, target)
+        if initial_loss is None:
+            initial_loss = loss.item()
+        loss.backward()
+        optimizer.step()
+
+    assert loss.item() < initial_loss, \
+        f"GPU batched loss should decrease: {initial_loss} -> {loss.item()}"
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_batched_gpu_gradient_accumulation():
+    """Verify gradient accumulation works correctly for batched GPU operations."""
+    batch, m, k, n = 2, 3, 4, 2
+    a = torch.randn(batch, m, k, device="cuda", requires_grad=True)
+    b = torch.randn(batch, k, n, device="cuda")
+
+    c1 = tropical_maxplus_matmul_batched(a, b)
+    c1.sum().backward()
+    grad1 = a.grad.clone()
+
+    c2 = tropical_maxplus_matmul_batched(a, b)
+    c2.sum().backward()
+
+    assert torch.allclose(a.grad, 2 * grad1), "Batched GPU gradients should accumulate"
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
+def test_batched_gpu_gradient_sparsity():
+    """Test that batched GPU tropical gradients have correct sparsity pattern."""
+    torch.manual_seed(42)
+
+    batch, m, k, n = 2, 4, 5, 3
+    a = (torch.randn(batch, m, k, device="cuda") * 10).requires_grad_(True)
+    b = (torch.randn(batch, k, n, device="cuda") * 10).requires_grad_(True)
+
+    c = tropical_maxplus_matmul_batched(a, b)
+    c.sum().backward()
+
+    # Multiple outputs may share same argmax, so nnz <= batch * m * n
+    max_nnz = batch * m * n
+    actual_nnz = (a.grad != 0).sum().item()
+
+    assert 0 < actual_nnz <= max_nnz, \
+        f"Expected 0 < nnz <= {max_nnz} on GPU, got {actual_nnz}"
+    # Total gradient mass should equal number of outputs
+    assert abs(a.grad.sum().item() - c.numel()) < 0.01, \
+        "Total GPU gradient should equal number of output elements"
+
+
 def test_batched_exports():
     """Test that batched functions are exported correctly."""
     from tropical_gemm import pytorch
